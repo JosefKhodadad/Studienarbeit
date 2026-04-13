@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Konfigurator — BlutdruckMonitor</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ── Navigation ─────────────────────────────────────────────────────────── -->
+<nav>
+  <a href="index.html" class="nav-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="url(#grad2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <defs>
+        <linearGradient id="grad2" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#6366f1"/>
+          <stop offset="100%" stop-color="#10b981"/>
+        </linearGradient>
+      </defs>
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+    BlutdruckMonitor
+  </a>
+  <div class="nav-links">
+    <a href="index.html"        class="nav-link">Dashboard</a>
+    <a href="configurator.html" class="nav-link active">Konfigurator</a>
+  </div>
+</nav>
+
+<!-- ── Konfigurator ───────────────────────────────────────────────────────── -->
+<main id="configurator-root">
+  <div class="page-header">
+    <h1 class="page-title">Konfigurator</h1>
+    <p class="page-subtitle">Messungen manuell eintragen und verwalten</p>
+  </div>
+
+  <div class="config-layout">
+
+    <!-- ── Eingabeformular ────────────────────────────────────────────────── -->
+    <div>
+      <div class="form-card">
+        <div class="form-card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="16"/>
+            <line x1="8"  y1="12" x2="16" y2="12"/>
+          </svg>
+          Neue Messung eintragen
+        </div>
+
+        <form id="entryForm" autocomplete="off">
+
+          <!-- Messtyp -->
+          <div class="form-group">
+            <label for="type">Messgerät / Methode</label>
+            <select id="type" required>
+              <option value="" disabled selected>— bitte wählen —</option>
+              <option value="cuffless">Manschettenloses Gerät</option>
+              <option value="phone">Telefonmessung</option>
+              <option value="cuff">Manschettenmessung</option>
+            </select>
+          </div>
+
+          <!-- Datum & Uhrzeit -->
+          <div class="form-group">
+            <label for="datetime">Datum &amp; Uhrzeit der Messung</label>
+            <input type="datetime-local" id="datetime" required />
+          </div>
+
+          <!-- Blutdruck -->
+          <div class="form-row">
+            <div class="form-group">
+              <label for="sys">Systole (SYS)</label>
+              <input type="number" id="sys" placeholder="z.&thinsp;B. 120" min="60" max="260" required />
+              <span class="input-hint">mmHg · Bereich 60–260</span>
+            </div>
+            <div class="form-group">
+              <label for="dia">Diastole (DIA)</label>
+              <input type="number" id="dia" placeholder="z.&thinsp;B. 80" min="40" max="160" required />
+              <span class="input-hint">mmHg · Bereich 40–160</span>
+            </div>
+          </div>
+
+          <!-- Puls -->
+          <div class="form-group">
+            <label for="pulse">Puls</label>
+            <input type="number" id="pulse" placeholder="z.&thinsp;B. 72" min="30" max="250" required />
+            <span class="input-hint">bpm · Bereich 30–250</span>
+          </div>
+
+          <!-- Live-Vorschau -->
+          <div class="form-group">
+            <label>Vorschau</label>
+            <div class="bp-preview" id="bp-preview">
+              <span style="color:var(--text-dim)">Werte eingeben…</span>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            Messung speichern
+          </button>
+        </form>
+      </div>
+
+      <!-- Kurzinfo Blutdruckwerte -->
+      <div style="margin-top:1rem; background:var(--bg-card); border:1px solid var(--border); border-radius:14px; padding:1.25rem; backdrop-filter:blur(12px);">
+        <div style="font-size:0.72rem;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.07em;margin-bottom:.875rem;">
+          Blutdruck-Referenz (mmHg)
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:0.8rem;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="bp-cat optimal" style="width:70px;justify-content:center;">Optimal</span>
+            <span style="color:var(--text-muted)">SYS &lt; 120 &amp;&amp; DIA &lt; 80</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="bp-cat normal" style="width:70px;justify-content:center;">Normal</span>
+            <span style="color:var(--text-muted)">SYS 120–129 &amp;&amp; DIA 80–84</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="bp-cat elevated" style="width:70px;justify-content:center;">Erhöht</span>
+            <span style="color:var(--text-muted)">SYS 130–139 &amp;&amp; DIA 85–89</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="bp-cat high" style="width:70px;justify-content:center;">Hoch</span>
+            <span style="color:var(--text-muted)">SYS ≥ 140 oder DIA ≥ 90</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Datentabelle ────────────────────────────────────────────────────── -->
+    <div class="table-card">
+      <div class="table-card-header">
+        <h2 class="table-card-title">Alle Messungen</h2>
+        <div class="filter-tabs">
+          <button class="filter-tab active" data-filter="all">Alle</button>
+          <button class="filter-tab" data-filter="cuffless">Manschettenlos</button>
+          <button class="filter-tab" data-filter="phone">Telefon</button>
+          <button class="filter-tab" data-filter="cuff">Manschette</button>
+        </div>
+      </div>
+
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Methode</th>
+              <th>Blutdruck</th>
+              <th>Puls</th>
+              <th>Kategorie</th>
+              <th>Datum</th>
+              <th>Uhrzeit</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="allDataBody"></tbody>
+        </table>
+        <div class="table-empty" id="tableEmpty">
+          Noch keine Einträge vorhanden. Tragen Sie oben Ihre erste Messung ein.
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /config-layout -->
+</main>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

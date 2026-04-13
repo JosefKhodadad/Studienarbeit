@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blutdruck Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Chart.js + Date-Adapter -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+
+<!-- ── Navigation ─────────────────────────────────────────────────────────── -->
+<nav>
+  <a href="index.html" class="nav-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="url(#grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <defs>
+        <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#6366f1"/>
+          <stop offset="100%" stop-color="#10b981"/>
+        </linearGradient>
+      </defs>
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+    BlutdruckMonitor
+  </a>
+  <div class="nav-links">
+    <a href="index.html"        class="nav-link active">Dashboard</a>
+    <a href="configurator.html" class="nav-link">Konfigurator</a>
+  </div>
+</nav>
+
+<!-- ── Dashboard ──────────────────────────────────────────────────────────── -->
+<main id="dashboard-root">
+  <div class="page-header">
+    <h1 class="page-title">Blutdruck Übersicht</h1>
+    <p class="page-subtitle" id="lastUpdate">Noch keine Daten vorhanden — Daten im <a href="configurator.html" style="color:#6366f1">Konfigurator</a> eintragen</p>
+  </div>
+
+  <div class="dashboard-grid">
+
+    <!-- ── Spalte 1: Manschettenloses Gerät ──────────────────────────────── -->
+    <div class="measurement-column">
+      <div class="column-header cuffless">
+        <div class="column-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="8" width="20" height="12" rx="3"/>
+            <path d="M8 8V6a4 4 0 0 1 8 0v2"/>
+            <line x1="12" y1="13" x2="12" y2="17"/>
+          </svg>
+          Manschettenloses Gerät
+        </div>
+        <div class="column-subtitle">Kontinuierliche / kontaktlose Messung</div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value sys"   id="last-sys-cuffless">--</div>
+          <div class="stat-label">SYS letzte</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value dia"   id="last-dia-cuffless">--</div>
+          <div class="stat-label">DIA letzte</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value pulse" id="last-pulse-cuffless">--</div>
+          <div class="stat-label">Puls letzte</div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-label">Verlauf (SYS / DIA / Puls)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-cuffless"></canvas>
+          <div class="chart-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Noch keine Daten
+          </div>
+        </div>
+      </div>
+
+      <div class="data-card">
+        <div class="data-card-header">
+          <span class="data-card-title">Messungen</span>
+          <span class="entry-count" id="count-cuffless">0 Einträge</span>
+        </div>
+        <div class="data-list" id="list-cuffless">
+          <div class="empty-state">
+            Noch keine Messungen.<br>
+            <a href="configurator.html" style="color:#6366f1">Jetzt eintragen →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Spalte 2: Telefonmessung ──────────────────────────────────────── -->
+    <div class="measurement-column">
+      <div class="column-header phone">
+        <div class="column-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="2" width="14" height="20" rx="2"/>
+            <circle cx="12" cy="17" r="1"/>
+          </svg>
+          Telefonmessung
+        </div>
+        <div class="column-subtitle">Messung via Smartphone-App</div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value sys"   id="last-sys-phone">--</div>
+          <div class="stat-label">SYS letzte</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value dia"   id="last-dia-phone">--</div>
+          <div class="stat-label">DIA letzte</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value pulse" id="last-pulse-phone">--</div>
+          <div class="stat-label">Puls letzte</div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-label">Verlauf (SYS / DIA / Puls)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-phone"></canvas>
+          <div class="chart-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Noch keine Daten
+          </div>
+        </div>
+      </div>
+
+      <div class="data-card">
+        <div class="data-card-header">
+          <span class="data-card-title">Messungen</span>
+          <span class="entry-count" id="count-phone">0 Einträge</span>
+        </div>
+        <div class="data-list" id="list-phone">
+          <div class="empty-state">
+            Noch keine Messungen.<br>
+            <a href="configurator.html" style="color:#10b981">Jetzt eintragen →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Spalte 3: Manschettenmessung ──────────────────────────────────── -->
+    <div class="measurement-column">
+      <div class="column-header cuff">
+        <div class="column-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 12h.01M12 12h.01M15 12h.01"/>
+            <path d="M5 8a7 7 0 0 1 14 0v4a7 7 0 0 1-14 0V8z"/>
+            <path d="M12 19v3M9 22h6"/>
+          </svg>
+          Manschettenmessung
+        </div>
+        <div class="column-subtitle">Klassische Blutdruckmessung</div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value sys"   id="last-sys-cuff">--</div>
+          <div class="stat-label">SYS letzte</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value dia"   id="last-dia-cuff">--</div>
+          <div class="stat-label">DIA letzte</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value pulse" id="last-pulse-cuff">--</div>
+          <div class="stat-label">Puls letzte</div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-label">Verlauf (SYS / DIA / Puls)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-cuff"></canvas>
+          <div class="chart-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Noch keine Daten
+          </div>
+        </div>
+      </div>
+
+      <div class="data-card">
+        <div class="data-card-header">
+          <span class="data-card-title">Messungen</span>
+          <span class="entry-count" id="count-cuff">0 Einträge</span>
+        </div>
+        <div class="data-list" id="list-cuff">
+          <div class="empty-state">
+            Noch keine Messungen.<br>
+            <a href="configurator.html" style="color:#f59e0b">Jetzt eintragen →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /dashboard-grid -->
+</main>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
