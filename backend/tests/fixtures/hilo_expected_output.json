@@ -1,0 +1,33 @@
+{
+  "patient": {
+    "full_name": "Max Mustermann",
+    "email": "max@example.org",
+    "gender": "männlich",
+    "birth_date": "1985-03-08",
+    "age_at_report_date": 41,
+    "height_cm": 178.0,
+    "weight_kg": 80.5
+  },
+  "report": {
+    "report_month": 3,
+    "report_year": 2026,
+    "source": "hilo_pdf"
+  },
+  "summary": {
+    "day_rest": {"mean": 124.0, "sd": 8.0, "max": 140.0, "min": 108.0, "measurements": 32},
+    "night": {"mean": 112.0, "sd": 7.0, "max": 126.0, "min": 99.0, "measurements": 28},
+    "all_measurements": {"mean": 118.0, "sd": 9.0, "max": 140.0, "min": 99.0, "measurements": 60}
+  },
+  "measurements": [
+    {
+      "datetime": "2026-03-01T07:30:00",
+      "systolic": 123,
+      "diastolic": 79,
+      "heart_rate": 68,
+      "measurement_type": "unknown",
+      "source_page": 2,
+      "source_column": "left",
+      "row_index_on_page": 1
+    }
+  ]
+}
