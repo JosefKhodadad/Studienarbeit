@@ -30,8 +30,21 @@ def to_report_model(page_text: str) -> dict:
 
 
 def measurement_datetime(date_str: str, time_str: str) -> str:
-    dt = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
-    return dt.isoformat()
+    """Combine a date and time string into an ISO datetime.
+
+    Accepts ``dd.mm.yyyy``, ``dd.mm.yy`` and ISO (``yyyy-mm-dd``) date tokens so
+    that both the test mock data and the real Hilo PDF extractor can feed into
+    the same mapper.
+    """
+    last_error: Exception | None = None
+    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(f"{date_str} {time_str}", f"{fmt} %H:%M")
+            return dt.isoformat()
+        except ValueError as exc:
+            last_error = exc
+            continue
+    raise ValueError(f"Unsupported datetime combination: {date_str!r} {time_str!r}") from last_error
 
 
 def _to_float(value: str | None) -> float | None:

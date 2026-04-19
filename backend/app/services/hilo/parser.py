@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from .extractor import extract_measurement_rows, extract_page_images, extract_patient_data, extract_summary
 from .icon_detection import IconDetector
 from .mapper import measurement_datetime, to_patient_model, to_report_model
+
+
+logger = logging.getLogger(__name__)
 
 
 class HiloPDFParser:
@@ -31,6 +35,10 @@ class HiloPDFParser:
             return self._parse_document(doc)
 
     def _parse_document(self, doc: Any) -> dict[str, Any]:
+        if len(doc) == 0:
+            logger.warning("Hilo PDF document is empty")
+            return {"patient": {}, "report": {}, "summary": {}, "measurements": []}
+
         first_page = doc[0]
         first_text = first_page.get_text("text")
 
@@ -41,6 +49,15 @@ class HiloPDFParser:
         self._train_icon_detector(doc)
         measurements = self._extract_measurements(doc)
 
+        logger.info(
+            "Hilo parse complete: pages=%d, measurements=%d, patient=%s, period=%s-%s",
+            len(doc),
+            len(measurements),
+            patient.get("full_name"),
+            report.get("report_month"),
+            report.get("report_year"),
+        )
+
         return {
             "patient": patient,
             "report": report,
@@ -49,31 +66,46 @@ class HiloPDFParser:
         }
 
     def _train_icon_detector(self, doc: Any) -> None:
-        if len(doc) < 18:
-            return
-        legend_page = doc[17]
-        legend_images = extract_page_images(legend_page)
-        # Heuristik: die ersten drei Legenden-Icons repräsentieren Kalibrierung, Manschette, Telefon.
-        mapping = {}
-        legend_keys = ["kalibrierung", "manschette", "telefon"]
-        for key, image_meta in zip(legend_keys, legend_images):
-            mapping[key] = image_meta
-        self.icon_detector.learn_legend(mapping)
+        """Best-effort legend training.
+
+        Hilo PDFs historically bundled a legend on the last page.  The current
+        export reuses the same template icons on every page, so training from
+        the last page produces bogus matches.  We keep the detector in a
+        cleared state unless a dedicated legend page is identified later; this
+        preserves the documented ``unknown`` fallback instead of misclassifying
+        rows.
+        """
+        self.icon_detector = IconDetector()
 
     def _extract_measurements(self, doc: Any) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        upper = min(len(doc), 17)
-        for page_index in range(1, upper):  # Seiten 2-17
+        total_pages = len(doc)
+        # Hilo PDFs end with a marketing page; measurement pages are 2..N-1.
+        data_end = max(1, total_pages - 1)
+        for page_index in range(1, data_end):
             page = doc[page_index]
             page_text = page.get_text("text")
             rows = extract_measurement_rows(page_text)
             row_icons = extract_page_images(page)
 
             for row in rows:
-                image_meta = row_icons[row.row_index_on_page - 1] if len(row_icons) >= row.row_index_on_page else None
+                image_meta = None
+                if 0 < row.row_index_on_page <= len(row_icons):
+                    image_meta = row_icons[row.row_index_on_page - 1]
+                try:
+                    iso_datetime = measurement_datetime(row.date, row.time)
+                except ValueError:
+                    logger.warning(
+                        "Skipping unparseable measurement on page %d: date=%s time=%s",
+                        page_index + 1,
+                        row.date,
+                        row.time,
+                    )
+                    continue
+
                 results.append(
                     {
-                        "datetime": measurement_datetime(row.date, row.time),
+                        "datetime": iso_datetime,
                         "systolic": row.systolic,
                         "diastolic": row.diastolic,
                         "heart_rate": row.heart_rate,

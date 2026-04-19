@@ -82,39 +82,58 @@ function getApiBase() {
 }
 
 async function apiRequest(path, options = {}) {
-  const bases = [getApiBase()];
-  if (window.location.protocol.startsWith('http') && window.location.origin !== DEFAULT_API_BASE) {
-    bases.unshift(window.location.origin);
+  const primary = getApiBase();
+  const bases = [primary];
+  if (
+    window.location.protocol.startsWith('http') &&
+    window.location.origin &&
+    window.location.origin !== primary &&
+    !bases.includes(window.location.origin)
+  ) {
+    bases.push(window.location.origin);
   }
 
-  let lastError = new Error('API request failed.');
+  let lastError = null;
 
   for (const base of bases) {
+    let response;
     try {
-      const response = await fetch(`${base}${path}`, options);
-      const text = await response.text();
-      let body = null;
+      response = await fetch(`${base}${path}`, options);
+    } catch (networkError) {
+      lastError = new Error(
+        `Backend unter ${base} nicht erreichbar (${networkError.message}). Laeuft uvicorn auf diesem Port?`
+      );
+      continue;
+    }
 
-      if (text) {
-        try {
-          body = JSON.parse(text);
-        } catch {
-          body = text;
-        }
+    const text = await response.text().catch(() => '');
+    let body = null;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = text;
       }
+    }
 
-      if (!response.ok) {
-        const detail = body && typeof body === 'object' && body.detail ? body.detail : `HTTP ${response.status}`;
-        throw new Error(detail);
-      }
-
+    if (response.ok) {
       return body;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+
+    const detail =
+      body && typeof body === 'object' && body.detail
+        ? body.detail
+        : typeof body === 'string' && body
+        ? body
+        : `HTTP ${response.status}`;
+    lastError = new Error(detail);
+    // Only try the next base if the response clearly came from a non-API host.
+    if (base === primary) {
+      break;
     }
   }
 
-  throw lastError;
+  throw lastError || new Error('API-Aufruf fehlgeschlagen.');
 }
 
 function fmtDatetime(iso) {
@@ -396,7 +415,13 @@ function updateLastUpdateLabel(viewModel) {
     .map((entry) => new Date(entry.datetime).getTime())
     .filter((value) => !Number.isNaN(value));
 
+  const totalImported = viewModel.summary ? viewModel.summary.measurement_count_total || 0 : 0;
+
   if (allEntries.length === 0) {
+    if (viewModel.mode === 'import' && viewModel.report && totalImported > 0) {
+      el.textContent = `Importierter Bericht ${viewModel.report.report_month}/${viewModel.report.report_year} - ${totalImported} Messungen (ohne erkannte Messart)`;
+      return;
+    }
     el.innerHTML = 'Noch keine Daten vorhanden - Daten im <a href="configurator.html" class="inline-link">Konfigurator</a> eintragen';
     return;
   }
