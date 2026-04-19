@@ -1,35 +1,63 @@
-# Hilo-/Aktiia-PDF-Import
+# Hilo-Import und Dashboard-Integration
 
-## Überblick
-Das Backend erweitert die bestehende Webanwendung um einen textbasierten Import von Hilo-Monatsberichten (PDF) via PyMuPDF (`fitz`).
+## Ziel
 
-### API-Endpunkte
-- `POST /api/hilo/import`
-  - akzeptiert entweder `multipart/form-data` mit Datei (`file`) oder einen lokalen Dateipfad (`file_path`)
-  - liefert eine JSON-Vorschau mit `patient`, `report`, `summary`, `measurements`
-- `POST /api/hilo/import-and-save`
-  - derzeit Alias für den Import-Preview-Flow
+Die vorhandene Hilo-PDF-Parserlogik bleibt im Backend gekapselt. Das Frontend zeigt wieder das klassische 3-Spalten-Dashboard und nutzt den PDF-Import nur noch als kompakte Benutzerfunktion im Dashboard.
 
-## Parser-Logik
-1. **Seite 1**: Extraktion von Personendaten, Berichtsmonat/-jahr und Summary-Blöcken (Tag/Ruhe, Nacht, Alle Messungen).
-2. **Seiten 2–17**: Extraktion der Messreihen mit Datum, Uhrzeit, SYS, DIA, HR.
-3. **Seite 18**: wird gezielt als Datenquelle ignoriert.
-4. **Mapping**: Vereinheitlichung in API-Schema inkl. `age_at_report_date`, ISO-Datetime und Herkunftsfeldern (`source_page`, `source_column`, `row_index_on_page`).
+## Backend-Aufbau
 
-## Icon-Erkennung ohne Binär-Exports
-- Es werden keine externen Bilddateien erzeugt.
-- Bildobjekte werden direkt aus dem geöffneten PDF extrahiert (`page.get_images` + `doc.extract_image`).
-- Legenden-Icons auf Seite 18 werden zur Laufzeit als Referenzsignaturen gelernt.
-- Messzeilen-Icons werden mit diesen Signaturen verglichen.
-- Wenn kein sicheres Matching möglich ist: `measurement_type = "unknown"`.
+- `HiloParserService`
+  - kapselt den vorhandenen `HiloPDFParser`
+  - liest Monat, Person, Summary und Messreihen aus dem PDF
+- `ImportService`
+  - nimmt den Upload entgegen
+  - speichert den zuletzt importierten Bericht
+- `AggregationService`
+  - normalisiert IDs, Summary und Messarten
+  - berechnet Warnungen und Dashboard-Daten
+- `InMemoryImportRepository`
+  - haelt den aktuellen Bericht fuer das Dashboard
 
-## Bekannte Grenzen
-- Exakte Layoutabweichungen im PDF können Regex-basierte Extraktion beeinflussen.
-- Die Zuordnung von Icon zu Zeile basiert auf der Reihenfolge der Bildobjekte pro Seite; bei stark abweichendem Rendering kann `unknown` zurückgegeben werden.
-- Ohne installierte Abhängigkeit `pymupdf` wird ein klarer Laufzeitfehler geworfen.
+## Verwendete Endpunkte
 
-## Beispiel
-```bash
-curl -X POST http://localhost:8000/api/hilo/import \
-  -F "file_path=sample_data/hilo_report.pdf"
+```text
+POST /api/imports/hilo
+GET /api/dashboard/monthly-summary
+GET /api/patients/{id}/profile
+POST /api/hilo/import
+POST /api/hilo/import-and-save
 ```
+
+Das Frontend zeigt keine technische API-Konfiguration mehr an, nutzt diese Routen intern aber weiterhin.
+
+## Messarten im Dashboard
+
+Die Icon-Erkennung bleibt die primaere Loesung fuer die Messart:
+
+- Legenden-Icons aus dem PDF werden als Referenzsignaturen gelernt
+- Messzeilen werden ueber die eingebetteten Bildobjekte zugeordnet
+- unsichere Treffer bleiben `unknown`
+
+Anzeige im alten Dashboard:
+
+- `cuff_calibration` -> Spalte `Manschettenloses Geraet`
+- `phone_measurement` -> Spalte `Telefonmessung`
+- `cuff_measurement` -> Spalte `Manschettenmessung`
+- `unknown` -> nur in Monatsstatistik und Warnungen
+
+## Frontend-Verhalten
+
+- oben im Dashboard gibt es nur eine kompakte PDF-Importleiste
+- nach erfolgreichem Import laedt das Dashboard automatisch:
+  - Berichtsmonat
+  - Personprofil
+  - Monatsstatistik
+  - Warnungen
+  - Messspalten und Charts
+- ohne Import bleibt das alte manuelle Dashboard mit `localStorage`-Daten benutzbar
+
+## Grenzen
+
+- Speicherung ist aktuell nur In-Memory
+- die Icon-Erkennung kann bei PDF-Abweichungen `unknown` liefern
+- das Frontend faellt lokal auf `http://127.0.0.1:8000` zurueck, wenn es nicht am selben Origin wie das Backend laeuft

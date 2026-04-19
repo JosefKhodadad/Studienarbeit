@@ -20,9 +20,9 @@ def extract_patient_data(page_text: str) -> dict[str, str | None]:
     patterns = {
         "full_name": r"Name\s*:?\s*(.+)",
         "email": r"E-?Mail\s*:?\s*([\w.+\-]+@[\w.\-]+)",
-        "gender": r"Geschlecht\s*:?\s*([A-Za-zäöüÄÖÜß]+)",
+        "gender": r"Geschlecht\s*:?\s*([A-Za-zäöüÄÖÜßÃ¤Ã¶Ã¼Ã„Ã–ÃœÃŸ]+)",
         "birth_date": r"Geburtsdatum\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})",
-        "height_cm": r"Gr(?:ö|oe)ße\s*:?\s*(\d{2,3})\s*cm",
+        "height_cm": r"Gr(?:ö|Ã¶|oe)(?:ß|ÃŸ|ss)e\s*:?\s*(\d{2,3})\s*cm",
         "weight_kg": r"Gewicht\s*:?\s*(\d{2,3}(?:[,.]\d+)?)\s*kg",
     }
     parsed: dict[str, str | None] = {}
@@ -33,12 +33,11 @@ def extract_patient_data(page_text: str) -> dict[str, str | None]:
 
 
 def extract_summary(page_text: str) -> dict[str, dict[str, float | int | None]]:
-    summary: dict[str, dict[str, float | int | None]] = {
+    return {
         "day_rest": _extract_summary_line(page_text, ["Tag", "Ruhe"]),
         "night": _extract_summary_line(page_text, ["Nacht"]),
         "all_measurements": _extract_summary_line(page_text, ["Alle", "Messungen"]),
     }
-    return summary
 
 
 def _extract_summary_line(page_text: str, labels: list[str]) -> dict[str, float | int | None]:

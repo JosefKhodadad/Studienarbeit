@@ -1,18 +1,12 @@
-/* ─────────────────────────────────────────────────────────────────────────────
-   BlutdruckMonitor — app.js
-   Datenverwaltung · Diagramme · Dashboard · Konfigurator
-───────────────────────────────────────────────────────────────────────────── */
-
 'use strict';
 
-// ── Konfiguration ─────────────────────────────────────────────────────────────
-
 const STORAGE_KEY = 'bpmonitor_v1';
+const DEFAULT_API_BASE = 'http://127.0.0.1:8000';
 
 const TYPES = {
   cuffless: {
     id: 'cuffless',
-    label: 'Manschettenloses Gerät',
+    label: 'Manschettenloses Geraet',
     short: 'Manschettenlos',
     color: '#6366f1',
   },
@@ -30,7 +24,21 @@ const TYPES = {
   },
 };
 
-// ── Datenzugriff ──────────────────────────────────────────────────────────────
+const IMPORT_TYPE_TO_COLUMN = {
+  cuff_calibration: 'cuffless',
+  phone_measurement: 'phone',
+  cuff_measurement: 'cuff',
+};
+
+const IMPORT_TYPE_LABELS = {
+  cuff_calibration: 'Kalibrierung',
+  phone_measurement: 'Telefon',
+  cuff_measurement: 'Manschette',
+  unknown: 'Unknown',
+};
+
+const _charts = {};
+let _currentFilter = 'all';
 
 function getData() {
   try {
@@ -52,12 +60,11 @@ function addEntry(type, sys, dia, pulse, datetime) {
   const entry = {
     id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     datetime: datetime || new Date().toISOString(),
-    sys:   parseInt(sys,   10),
-    dia:   parseInt(dia,   10),
+    sys: parseInt(sys, 10),
+    dia: parseInt(dia, 10),
     pulse: parseInt(pulse, 10),
   };
   data[type].push(entry);
-  // chronologisch sortieren
   data[type].sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
   saveData(data);
   return entry;
@@ -66,11 +73,49 @@ function addEntry(type, sys, dia, pulse, datetime) {
 function deleteEntry(type, id) {
   const data = getData();
   if (!data[type]) return;
-  data[type] = data[type].filter(e => e.id !== id);
+  data[type] = data[type].filter((entry) => entry.id !== id);
   saveData(data);
 }
 
-// ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+function getApiBase() {
+  return DEFAULT_API_BASE;
+}
+
+async function apiRequest(path, options = {}) {
+  const bases = [getApiBase()];
+  if (window.location.protocol.startsWith('http') && window.location.origin !== DEFAULT_API_BASE) {
+    bases.unshift(window.location.origin);
+  }
+
+  let lastError = new Error('API request failed.');
+
+  for (const base of bases) {
+    try {
+      const response = await fetch(`${base}${path}`, options);
+      const text = await response.text();
+      let body = null;
+
+      if (text) {
+        try {
+          body = JSON.parse(text);
+        } catch {
+          body = text;
+        }
+      }
+
+      if (!response.ok) {
+        const detail = body && typeof body === 'object' && body.detail ? body.detail : `HTTP ${response.status}`;
+        throw new Error(detail);
+      }
+
+      return body;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError;
+}
 
 function fmtDatetime(iso) {
   const d = new Date(iso);
@@ -80,15 +125,19 @@ function fmtDatetime(iso) {
 }
 
 function bpCategory(sys, dia) {
-  if (sys < 120 && dia < 80) return { label: 'Optimal',  cls: 'optimal'  };
-  if (sys < 130 && dia < 85) return { label: 'Normal',   cls: 'normal'   };
-  if (sys < 140 && dia < 90) return { label: 'Erhöht',   cls: 'elevated' };
-  return                            { label: 'Hoch',     cls: 'high'     };
+  if (sys < 120 && dia < 80) return { label: 'Optimal', cls: 'optimal' };
+  if (sys < 130 && dia < 85) return { label: 'Normal', cls: 'normal' };
+  if (sys < 140 && dia < 90) return { label: 'Erhoeht', cls: 'elevated' };
+  return { label: 'Hoch', cls: 'high' };
 }
 
 function showToast(msg, type = 'success') {
   let el = document.getElementById('toast');
-  if (!el) { el = document.createElement('div'); el.id = 'toast'; document.body.appendChild(el); }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    document.body.appendChild(el);
+  }
   el.textContent = msg;
   el.style.background = type === 'error' ? '#ef4444' : '#10b981';
   el.classList.add('show');
@@ -96,17 +145,21 @@ function showToast(msg, type = 'success') {
   el._timeout = setTimeout(() => el.classList.remove('show'), 2800);
 }
 
-// ── Diagramm ──────────────────────────────────────────────────────────────────
-
-const _charts = {};
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
 
 function createBPChart(canvasId, entries) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
 
-  if (_charts[canvasId]) { _charts[canvasId].destroy(); delete _charts[canvasId]; }
+  if (_charts[canvasId]) {
+    _charts[canvasId].destroy();
+    delete _charts[canvasId];
+  }
 
-  const wrap  = canvas.parentElement;
+  const wrap = canvas.parentElement;
   const empty = wrap.querySelector('.chart-empty');
 
   if (entries.length === 0) {
@@ -120,9 +173,9 @@ function createBPChart(canvasId, entries) {
 
   const mkDataset = (label, key, color) => ({
     label,
-    data: entries.map(e => ({ x: new Date(e.datetime), y: e[key] })),
+    data: entries.map((entry) => ({ x: new Date(entry.datetime), y: entry[key] })),
     borderColor: color,
-    backgroundColor: color + '18',
+    backgroundColor: `${color}18`,
     pointBackgroundColor: color,
     pointBorderColor: '#0f172a',
     pointBorderWidth: 1.5,
@@ -137,8 +190,8 @@ function createBPChart(canvasId, entries) {
     type: 'line',
     data: {
       datasets: [
-        mkDataset('SYS',  'sys',   '#ef4444'),
-        mkDataset('DIA',  'dia',   '#f59e0b'),
+        mkDataset('SYS', 'sys', '#ef4444'),
+        mkDataset('DIA', 'dia', '#f59e0b'),
         mkDataset('Puls', 'pulse', '#10b981'),
       ],
     },
@@ -160,35 +213,17 @@ function createBPChart(canvasId, entries) {
             font: { size: 11, family: 'Inter, system-ui' },
           },
         },
-        tooltip: {
-          backgroundColor: 'rgba(15,23,42,0.97)',
-          borderColor: 'rgba(255,255,255,0.1)',
-          borderWidth: 1,
-          titleColor: '#f1f5f9',
-          bodyColor: '#94a3b8',
-          padding: 12,
-          titleFont: { size: 12, weight: '600' },
-          bodyFont:  { size: 12 },
-          callbacks: {
-            title: items => {
-              const d = new Date(items[0].parsed.x);
-              return d.toLocaleString('de-DE', {
-                day: '2-digit', month: '2-digit', year: 'numeric',
-                hour: '2-digit', minute: '2-digit',
-              });
-            },
-            label: item => ` ${item.dataset.label}: ${item.parsed.y}${item.dataset.label === 'Puls' ? ' bpm' : ' mmHg'}`,
-          },
-        },
       },
       scales: {
         x: {
           type: 'time',
           time: {
             displayFormats: {
-              millisecond: 'HH:mm', second: 'HH:mm', minute: 'HH:mm',
-              hour: 'dd.MM HH:mm', day: 'dd.MM', week: 'dd.MM',
-              month: 'MM.yy', quarter: 'MM.yy', year: 'yyyy',
+              minute: 'HH:mm',
+              hour: 'dd.MM HH:mm',
+              day: 'dd.MM',
+              month: 'MM.yy',
+              year: 'yyyy',
             },
             tooltipFormat: 'dd.MM.yyyy HH:mm',
           },
@@ -208,84 +243,248 @@ function createBPChart(canvasId, entries) {
   });
 }
 
-// ── Dashboard ─────────────────────────────────────────────────────────────────
-
 function renderList(type, entries) {
-  const list  = document.getElementById(`list-${type}`);
+  const list = document.getElementById(`list-${type}`);
   const count = document.getElementById(`count-${type}`);
   if (!list) return;
 
-  if (count) count.textContent = `${entries.length} ${entries.length === 1 ? 'Eintrag' : 'Einträge'}`;
+  if (count) count.textContent = `${entries.length} ${entries.length === 1 ? 'Eintrag' : 'Eintraege'}`;
 
   if (entries.length === 0) {
-    list.innerHTML = `<div class="empty-state">Noch keine Messungen.<br>
-      <a href="configurator.html" style="color:${TYPES[type].color}">Jetzt eintragen →</a></div>`;
+    list.innerHTML = `<div class="empty-state">Noch keine Messungen.<br><a href="configurator.html" style="color:${TYPES[type].color}">Jetzt eintragen -></a></div>`;
     return;
   }
 
-  const sorted = [...entries].reverse(); // neueste zuerst
-  list.innerHTML = sorted.map(e => {
-    const dt = fmtDatetime(e.datetime);
+  const sorted = [...entries].reverse();
+  list.innerHTML = sorted.map((entry) => {
+    const dt = fmtDatetime(entry.datetime);
     return `<div class="data-entry">
       <div class="entry-values">
         <div class="entry-bp">
-          <span class="sys">${e.sys}</span><span class="sep">/</span><span class="dia">${e.dia}</span>
+          <span class="sys">${entry.sys}</span><span class="sep">/</span><span class="dia">${entry.dia}</span>
         </div>
-        <div class="entry-pulse">♥ ${e.pulse}</div>
+        <div class="entry-pulse">HR ${entry.pulse}</div>
       </div>
-      <div class="entry-time">
+      <div class="entry-meta">
         <div class="t-date">${dt.date}</div>
         <div class="t-time">${dt.time}</div>
+        ${entry.typeLabel ? `<div class="t-type">${entry.typeLabel}</div>` : ''}
       </div>
     </div>`;
   }).join('');
 }
 
 function updateStats(type, entries) {
-  if (entries.length === 0) return;
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
+
+  if (entries.length === 0) {
+    set(`last-sys-${type}`, '--');
+    set(`last-dia-${type}`, '--');
+    set(`last-pulse-${type}`, '--');
+    return;
+  }
+
   const last = entries[entries.length - 1];
-  const set  = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-  set(`last-sys-${type}`,   last.sys);
-  set(`last-dia-${type}`,   last.dia);
+  set(`last-sys-${type}`, last.sys);
+  set(`last-dia-${type}`, last.dia);
   set(`last-pulse-${type}`, last.pulse);
 }
 
-function initDashboard() {
-  const data  = getData();
-  const types = ['cuffless', 'phone', 'cuff'];
+function buildManualDashboardData() {
+  const data = getData();
+  const columns = {};
+  Object.keys(TYPES).forEach((type) => {
+    columns[type] = (data[type] || []).map((entry) => ({ ...entry, typeLabel: 'Manuell' }));
+  });
 
-  types.forEach(type => {
-    const entries = data[type] || [];
+  return {
+    columns,
+    report: null,
+    patient: null,
+    summary: {
+      measurement_count_total: Object.values(columns).reduce((sum, entries) => sum + entries.length, 0),
+      measurement_count_day_rest: 0,
+      measurement_count_night: 0,
+      measurement_count_by_type: {
+        cuff_calibration: columns.cuffless.length,
+        cuff_measurement: columns.cuff.length,
+        phone_measurement: columns.phone.length,
+        unknown: 0,
+      },
+    },
+    warnings: [],
+    mode: 'manual',
+  };
+}
+
+function mapImportedPayload(payload) {
+  const columns = { cuffless: [], phone: [], cuff: [] };
+
+  for (const measurement of payload.measurements || []) {
+    const target = IMPORT_TYPE_TO_COLUMN[measurement.measurement_type];
+    if (!target) continue;
+    columns[target].push({
+      id: `${measurement.source_page}_${measurement.row_index_on_page}_${measurement.datetime}`,
+      datetime: measurement.datetime,
+      sys: measurement.systolic,
+      dia: measurement.diastolic,
+      pulse: measurement.heart_rate,
+      typeLabel: IMPORT_TYPE_LABELS[measurement.measurement_type] || measurement.measurement_type,
+    });
+  }
+
+  Object.values(columns).forEach((entries) => entries.sort((a, b) => new Date(a.datetime) - new Date(b.datetime)));
+
+  return {
+    columns,
+    report: payload.report || null,
+    patient: payload.patient || null,
+    summary: payload.summary || {},
+    warnings: payload.warnings || [],
+    mode: 'import',
+  };
+}
+
+function renderReportSummary(viewModel) {
+  const patient = viewModel.patient || {};
+  const report = viewModel.report || {};
+  const summary = viewModel.summary || {};
+  const byType = summary.measurement_count_by_type || {};
+
+  setText('reportMonthLabel', report.report_month && report.report_year ? `${report.report_month}/${report.report_year}` : 'Kein Bericht');
+  setText('summaryName', patient.full_name || '-');
+  setText('summaryAge', patient.age_at_report_date ?? '-');
+  setText('summaryGender', patient.gender || '-');
+  setText('summaryHeight', patient.height_cm ? `${patient.height_cm} cm` : '-');
+  setText('summaryWeight', patient.weight_kg ? `${patient.weight_kg} kg` : '-');
+  setText('summaryEmail', patient.email || '-');
+
+  setText('summaryTotal', summary.measurement_count_total ?? 0);
+  setText('summaryDay', summary.measurement_count_day_rest ?? 0);
+  setText('summaryNight', summary.measurement_count_night ?? 0);
+  setText('summaryUnknown', byType.unknown ?? 0);
+  setText('summaryCalibration', byType.cuff_calibration ?? 0);
+  setText('summaryCuff', byType.cuff_measurement ?? 0);
+  setText('summaryPhone', byType.phone_measurement ?? 0);
+
+  const warningList = document.getElementById('warningList');
+  if (warningList) {
+    warningList.innerHTML = (viewModel.warnings || []).length > 0
+      ? viewModel.warnings.map((warning) => `<li>${warning}</li>`).join('')
+      : '<li>Keine Warnungen vorhanden.</li>';
+  }
+}
+
+function renderDashboardColumns(viewModel) {
+  Object.keys(TYPES).forEach((type) => {
+    const entries = viewModel.columns[type] || [];
     updateStats(type, entries);
     renderList(type, entries);
     createBPChart(`chart-${type}`, entries);
   });
+}
 
-  // Letzte Messung globale Zeitangabe
-  const allTs = types.flatMap(t => (data[t] || []).map(e => +new Date(e.datetime)));
-  if (allTs.length > 0) {
-    const el = document.getElementById('lastUpdate');
-    if (el) el.textContent = `Letzte Messung: ${fmtDatetime(new Date(Math.max(...allTs)).toISOString()).full}`;
+function updateLastUpdateLabel(viewModel) {
+  const el = document.getElementById('lastUpdate');
+  if (!el) return;
+
+  const allEntries = Object.values(viewModel.columns)
+    .flat()
+    .map((entry) => new Date(entry.datetime).getTime())
+    .filter((value) => !Number.isNaN(value));
+
+  if (allEntries.length === 0) {
+    el.innerHTML = 'Noch keine Daten vorhanden - Daten im <a href="configurator.html" class="inline-link">Konfigurator</a> eintragen';
+    return;
+  }
+
+  const latest = fmtDatetime(new Date(Math.max(...allEntries)).toISOString()).full;
+  if (viewModel.mode === 'import' && viewModel.report) {
+    el.textContent = `Importierter Bericht ${viewModel.report.report_month}/${viewModel.report.report_year} - letzte Messung: ${latest}`;
+  } else {
+    el.textContent = `Letzte manuelle Messung: ${latest}`;
   }
 }
 
-// ── Konfigurator ──────────────────────────────────────────────────────────────
+function renderDashboardView(viewModel) {
+  renderDashboardColumns(viewModel);
+  renderReportSummary(viewModel);
+  updateLastUpdateLabel(viewModel);
+}
 
-let _currentFilter = 'all';
+async function loadImportedDashboard() {
+  return apiRequest('/api/dashboard/monthly-summary');
+}
+
+async function tryRenderImportedDashboard() {
+  try {
+    const payload = await loadImportedDashboard();
+    renderDashboardView(mapImportedPayload(payload));
+    setImportStatus('Importierte Monatsdaten geladen.');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function setImportStatus(message, type = 'info') {
+  const el = document.getElementById('importStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.style.color = type === 'error' ? '#fca5a5' : type === 'success' ? '#86efac' : '';
+}
+
+async function handlePdfImport(event) {
+  event.preventDefault();
+  const fileInput = document.getElementById('pdfFile');
+  const file = fileInput?.files?.[0];
+
+  if (!file) {
+    setImportStatus('Bitte zuerst eine PDF-Datei auswaehlen.', 'error');
+    showToast('Bitte eine PDF-Datei auswaehlen.', 'error');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  setImportStatus('PDF wird importiert...');
+
+  try {
+    const payload = await apiRequest('/api/imports/hilo', {
+      method: 'POST',
+      body: formData,
+    });
+    renderDashboardView(mapImportedPayload(payload));
+    setImportStatus('Import erfolgreich abgeschlossen.', 'success');
+    showToast('PDF erfolgreich importiert.');
+  } catch (error) {
+    setImportStatus(error.message || 'Import fehlgeschlagen.', 'error');
+    showToast(error.message || 'Import fehlgeschlagen.', 'error');
+  }
+}
+
+function initDashboard() {
+  document.getElementById('pdfImportForm')?.addEventListener('submit', handlePdfImport);
+  renderDashboardView(buildManualDashboardData());
+  tryRenderImportedDashboard();
+}
 
 function renderAllData(filter) {
   _currentFilter = filter;
-  const data  = getData();
+  const data = getData();
   const tbody = document.getElementById('allDataBody');
   const empty = document.getElementById('tableEmpty');
   if (!tbody) return;
 
   let rows = [];
   for (const type of ['cuffless', 'phone', 'cuff']) {
-    for (const e of (data[type] || [])) rows.push({ ...e, type });
+    for (const entry of data[type] || []) rows.push({ ...entry, type });
   }
 
-  if (filter !== 'all') rows = rows.filter(r => r.type === filter);
+  if (filter !== 'all') rows = rows.filter((row) => row.type === filter);
   rows.sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
 
   if (rows.length === 0) {
@@ -295,51 +494,46 @@ function renderAllData(filter) {
   }
   if (empty) empty.style.display = 'none';
 
-  tbody.innerHTML = rows.map(r => {
-    const dt  = fmtDatetime(r.datetime);
-    const cat = bpCategory(r.sys, r.dia);
+  tbody.innerHTML = rows.map((row) => {
+    const dt = fmtDatetime(row.datetime);
+    const cat = bpCategory(row.sys, row.dia);
     return `<tr>
-      <td><span class="type-badge ${r.type}">${TYPES[r.type].short}</span></td>
-      <td><div class="bp-display">
-        <span class="sys">${r.sys}</span><span class="sep">/</span><span class="dia">${r.dia}</span>
-        <span class="unit">mmHg</span>
-      </div></td>
-      <td><div class="pulse-display">♥ ${r.pulse} bpm</div></td>
+      <td><span class="type-badge ${row.type}">${TYPES[row.type].short}</span></td>
+      <td><div class="bp-display"><span class="sys">${row.sys}</span><span class="sep">/</span><span class="dia">${row.dia}</span><span class="unit">mmHg</span></div></td>
+      <td><div class="pulse-display">HR ${row.pulse} bpm</div></td>
       <td><span class="bp-cat ${cat.cls}">${cat.label}</span></td>
       <td>${dt.date}</td>
       <td>${dt.time}</td>
-      <td>
-        <button class="btn btn-danger" onclick="handleDelete('${r.type}','${r.id}')">Löschen</button>
-      </td>
+      <td><button class="btn btn-danger" onclick="handleDelete('${row.type}','${row.id}')">Loeschen</button></td>
     </tr>`;
   }).join('');
 }
 
 window.handleDelete = function(type, id) {
-  if (!confirm('Eintrag wirklich löschen?')) return;
+  if (!confirm('Eintrag wirklich loeschen?')) return;
   deleteEntry(type, id);
   renderAllData(_currentFilter);
-  showToast('Eintrag gelöscht');
+  showToast('Eintrag geloescht');
 };
 
 function updatePreview() {
-  const sys   = document.getElementById('sys');
-  const dia   = document.getElementById('dia');
+  const sys = document.getElementById('sys');
+  const dia = document.getElementById('dia');
   const pulse = document.getElementById('pulse');
-  const prev  = document.getElementById('bp-preview');
+  const prev = document.getElementById('bp-preview');
   if (!sys || !dia || !pulse || !prev) return;
 
   const s = parseInt(sys.value, 10);
   const d = parseInt(dia.value, 10);
   const p = parseInt(pulse.value, 10);
 
-  if (isNaN(s) || isNaN(d)) {
-    prev.innerHTML = '<span style="color:var(--text-dim)">Werte eingeben…</span>';
+  if (Number.isNaN(s) || Number.isNaN(d)) {
+    prev.innerHTML = '<span style="color:var(--text-dim)">Werte eingeben...</span>';
     return;
   }
 
   const cat = bpCategory(s, d);
-  const pulseStr = (!isNaN(p)) ? `<span class="preview-pulse">♥ ${p} bpm</span>` : '';
+  const pulseStr = !Number.isNaN(p) ? `<span class="preview-pulse">HR ${p} bpm</span>` : '';
   prev.innerHTML = `
     <div class="preview-vals">
       <span class="sys">${s}</span><span class="sep">/</span><span class="dia">${d}</span>
@@ -350,62 +544,60 @@ function updatePreview() {
 }
 
 function initConfigurator() {
-  // Standard-Datum = jetzt
   const dtInput = document.getElementById('datetime');
   if (dtInput) {
-    const now   = new Date();
+    const now = new Date();
     dtInput.value = new Date(now - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   }
 
-  // Live-Vorschau
-  ['sys', 'dia', 'pulse'].forEach(id => {
+  ['sys', 'dia', 'pulse'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updatePreview);
   });
 
-  // Formular absenden
   const form = document.getElementById('entryForm');
   if (form) {
-    form.addEventListener('submit', e => {
+    form.addEventListener('submit', (e) => {
       e.preventDefault();
-      const type  = document.getElementById('type').value;
-      const sys   = document.getElementById('sys').value.trim();
-      const dia   = document.getElementById('dia').value.trim();
+      const type = document.getElementById('type').value;
+      const sys = document.getElementById('sys').value.trim();
+      const dia = document.getElementById('dia').value.trim();
       const pulse = document.getElementById('pulse').value.trim();
       const dtVal = document.getElementById('datetime').value;
 
       if (!type || !sys || !dia || !pulse || !dtVal) {
-        showToast('Bitte alle Felder ausfüllen.', 'error'); return;
+        showToast('Bitte alle Felder ausfuellen.', 'error');
+        return;
       }
-      if (parseInt(sys) < 60 || parseInt(sys) > 260) {
-        showToast('SYS-Wert scheint unrealistisch (60–260).', 'error'); return;
+      if (parseInt(sys, 10) < 60 || parseInt(sys, 10) > 260) {
+        showToast('SYS-Wert scheint unrealistisch (60-260).', 'error');
+        return;
       }
-      if (parseInt(dia) < 40 || parseInt(dia) > 160) {
-        showToast('DIA-Wert scheint unrealistisch (40–160).', 'error'); return;
+      if (parseInt(dia, 10) < 40 || parseInt(dia, 10) > 160) {
+        showToast('DIA-Wert scheint unrealistisch (40-160).', 'error');
+        return;
       }
-      if (parseInt(pulse) < 30 || parseInt(pulse) > 250) {
-        showToast('Puls-Wert scheint unrealistisch (30–250).', 'error'); return;
+      if (parseInt(pulse, 10) < 30 || parseInt(pulse, 10) > 250) {
+        showToast('Puls-Wert scheint unrealistisch (30-250).', 'error');
+        return;
       }
 
       addEntry(type, sys, dia, pulse, new Date(dtVal).toISOString());
       showToast('Messung gespeichert!');
 
-      // Felder zurücksetzen
-      document.getElementById('sys').value   = '';
-      document.getElementById('dia').value   = '';
+      document.getElementById('sys').value = '';
+      document.getElementById('dia').value = '';
       document.getElementById('pulse').value = '';
       const now2 = new Date();
-      document.getElementById('datetime').value =
-        new Date(now2 - now2.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      document.getElementById('datetime').value = new Date(now2 - now2.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
       updatePreview();
       renderAllData(_currentFilter);
     });
   }
 
-  // Filter-Tabs
-  document.querySelectorAll('.filter-tab').forEach(tab => {
+  document.querySelectorAll('.filter-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.filter-tab').forEach((item) => item.classList.remove('active'));
       tab.classList.add('active');
       renderAllData(tab.dataset.filter);
     });
@@ -414,9 +606,7 @@ function initConfigurator() {
   renderAllData('all');
 }
 
-// ── Seiten-Init ───────────────────────────────────────────────────────────────
-
 document.addEventListener('DOMContentLoaded', () => {
-  if (document.getElementById('dashboard-root'))    initDashboard();
+  if (document.getElementById('dashboard-root')) initDashboard();
   if (document.getElementById('configurator-root')) initConfigurator();
 });

@@ -7,10 +7,15 @@ def test_parse_german_date_supports_common_formats() -> None:
 
 
 def test_extract_report_period_handles_umlaut_month() -> None:
-    period = extract_report_period("Hilo Blutdruckbericht März 2026")
-    assert period is not None
-    assert period.month == 3
-    assert period.year == 2026
+    mojibake_period = extract_report_period("Hilo Blutdruckbericht MÃ¤rz 2026")
+    assert mojibake_period is not None
+    assert mojibake_period.month == 3
+    assert mojibake_period.year == 2026
+
+    native_period = extract_report_period("Hilo Blutdruckbericht März 2026")
+    assert native_period is not None
+    assert native_period.month == 3
+    assert native_period.year == 2026
 
 
 def test_calculate_age_at_report() -> None:

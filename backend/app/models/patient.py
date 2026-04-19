@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr
 
 
 class Patient(BaseModel):
+    id: str | None = None
     full_name: str | None = None
     email: EmailStr | None = None
     gender: str | None = None

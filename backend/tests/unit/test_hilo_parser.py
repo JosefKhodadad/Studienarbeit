@@ -4,11 +4,11 @@ from app.services.hilo.extractor import extract_measurement_rows, extract_patien
 PAGE1_TEXT = """
 Name: Max Mustermann
 E-Mail: max@example.org
-Geschlecht: männlich
+Geschlecht: mÃ¤nnlich
 Geburtsdatum: 08.03.1985
-Größe: 178 cm
+GrÃ¶ÃŸe: 178 cm
 Gewicht: 80,5 kg
-Hilo Monatsbericht März 2026
+Hilo Monatsbericht MÃ¤rz 2026
 Tag Ruhe 124 8 140 108 32
 Nacht 112 7 126 99 28
 Alle Messungen 118 9 140 99 60
@@ -24,6 +24,20 @@ def test_extract_patient_data() -> None:
     patient = extract_patient_data(PAGE1_TEXT)
     assert patient["full_name"] == "Max Mustermann"
     assert patient["email"] == "max@example.org"
+
+
+def test_extract_patient_data_with_native_umlauts() -> None:
+    text = """
+    Name: Erika Beispiel
+    Geschlecht: weiblich
+    Geburtsdatum: 01.02.1990
+    Größe: 170 cm
+    Gewicht: 65,5 kg
+    """
+    patient = extract_patient_data(text)
+    assert patient["gender"] == "weiblich"
+    assert patient["height_cm"] == "170"
+    assert patient["weight_kg"] == "65,5"
 
 
 def test_extract_summary() -> None:

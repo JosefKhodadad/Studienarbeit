@@ -5,21 +5,77 @@ from app.models.patient import Patient
 
 
 class ReportInfo(BaseModel):
+    id: str | None = None
     report_month: int | None = None
     report_year: int | None = None
     source: str = "hilo_pdf"
+    file_name: str | None = None
 
 
 class SummarySection(BaseModel):
     mean: float | None = None
     sd: float | None = None
-    max: float | None = Field(default=None, alias="max")
-    min: float | None = Field(default=None, alias="min")
+    max: float | None = None
+    min: float | None = None
     measurements: int | None = None
+
+
+class MeasurementTypeBreakdown(BaseModel):
+    cuff_calibration: int = 0
+    cuff_measurement: int = 0
+    phone_measurement: int = 0
+    unknown: int = 0
+
+
+class MonthlySummary(BaseModel):
+    measurement_count_total: int = 0
+    measurement_count_day_rest: int = 0
+    measurement_count_night: int = 0
+    measurement_count_by_type: MeasurementTypeBreakdown = Field(default_factory=MeasurementTypeBreakdown)
+    unknown_share: float = 0.0
+    day_rest: SummarySection = Field(default_factory=SummarySection)
+    night: SummarySection = Field(default_factory=SummarySection)
+    all_measurements: SummarySection = Field(default_factory=SummarySection)
 
 
 class HiloImportResponse(BaseModel):
     patient: Patient
     report: ReportInfo
-    summary: dict[str, SummarySection]
-    measurements: list[BloodPressureMeasurement]
+    summary: MonthlySummary
+    warnings: list[str] = Field(default_factory=list)
+    measurements: list[BloodPressureMeasurement] = Field(default_factory=list)
+
+
+class DirectImportPatient(BaseModel):
+    full_name: str | None = None
+    birth_date: str | None = None
+    gender: str | None = None
+    height_cm: float | None = None
+    weight_kg: float | None = None
+    email: str | None = None
+
+
+class DirectImportReport(BaseModel):
+    report_month: int | None = None
+    report_year: int | None = None
+    source: str = "mobile_api"
+    file_name: str | None = None
+
+
+class DirectImportMeasurement(BaseModel):
+    datetime: str
+    systolic: int
+    diastolic: int
+    heart_rate: int
+    measurement_type: str = "unknown"
+
+
+class DirectImportRequest(BaseModel):
+    patient: DirectImportPatient
+    report: DirectImportReport
+    measurements: list[DirectImportMeasurement]
+
+
+class PatientProfileResponse(BaseModel):
+    patient: Patient
+    report: ReportInfo

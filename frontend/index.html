@@ -5,13 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Blutdruck Dashboard</title>
   <link rel="stylesheet" href="style.css" />
-  <!-- Chart.js + Date-Adapter -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
-
-<!-- ── Navigation ─────────────────────────────────────────────────────────── -->
 <nav>
   <a href="index.html" class="nav-logo">
     <svg viewBox="0 0 24 24" fill="none" stroke="url(#grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -26,21 +23,79 @@
     BlutdruckMonitor
   </a>
   <div class="nav-links">
-    <a href="index.html"        class="nav-link active">Dashboard</a>
+    <a href="index.html" class="nav-link active">Dashboard</a>
     <a href="configurator.html" class="nav-link">Konfigurator</a>
   </div>
 </nav>
 
-<!-- ── Dashboard ──────────────────────────────────────────────────────────── -->
 <main id="dashboard-root">
   <div class="page-header">
-    <h1 class="page-title">Blutdruck Übersicht</h1>
-    <p class="page-subtitle" id="lastUpdate">Noch keine Daten vorhanden — Daten im <a href="configurator.html" style="color:#6366f1">Konfigurator</a> eintragen</p>
+    <h1 class="page-title">Blutdruck Uebersicht</h1>
+    <p class="page-subtitle" id="lastUpdate">
+      Noch keine importierten Daten vorhanden. Sie koennen weiterhin Daten im
+      <a href="configurator.html" class="inline-link">Konfigurator</a> eintragen.
+    </p>
   </div>
 
-  <div class="dashboard-grid">
+  <section class="import-card">
+    <div class="import-copy">
+      <div class="import-title">Hilo PDF importieren</div>
+      <div class="import-subtitle">
+        Laden Sie einen Monatsbericht hoch. Das Backend extrahiert Monat, Person,
+        Messwerte, Zeitstempel und die Messart per Icon-Erkennung.
+      </div>
+    </div>
+    <form id="pdfImportForm" class="import-form">
+      <input id="pdfFile" type="file" accept=".pdf,application/pdf" />
+      <button type="submit" class="btn btn-primary">Import starten</button>
+    </form>
+    <div class="import-status" id="importStatus">Bereit fuer den PDF-Import.</div>
+  </section>
 
-    <!-- ── Spalte 1: Manschettenloses Gerät ──────────────────────────────── -->
+  <section class="report-summary" id="reportSummary">
+    <div class="summary-card patient-summary">
+      <div class="summary-card-header">
+        <span class="summary-card-title">Person und Bericht</span>
+        <span class="summary-pill" id="reportMonthLabel">Kein Bericht</span>
+      </div>
+      <div class="summary-grid">
+        <div class="summary-item"><span class="summary-label">Name</span><span class="summary-value" id="summaryName">-</span></div>
+        <div class="summary-item"><span class="summary-label">Alter</span><span class="summary-value" id="summaryAge">-</span></div>
+        <div class="summary-item"><span class="summary-label">Geschlecht</span><span class="summary-value" id="summaryGender">-</span></div>
+        <div class="summary-item"><span class="summary-label">Groesse</span><span class="summary-value" id="summaryHeight">-</span></div>
+        <div class="summary-item"><span class="summary-label">Gewicht</span><span class="summary-value" id="summaryWeight">-</span></div>
+        <div class="summary-item"><span class="summary-label">E-Mail</span><span class="summary-value" id="summaryEmail">-</span></div>
+      </div>
+    </div>
+
+    <div class="summary-card month-summary">
+      <div class="summary-card-header">
+        <span class="summary-card-title">Monatszusammenfassung</span>
+      </div>
+      <div class="month-stats-grid">
+        <div class="month-stat"><span class="month-stat-label">Gesamt</span><span class="month-stat-value" id="summaryTotal">0</span></div>
+        <div class="month-stat"><span class="month-stat-label">Tag / Ruhe</span><span class="month-stat-value" id="summaryDay">0</span></div>
+        <div class="month-stat"><span class="month-stat-label">Nacht</span><span class="month-stat-value" id="summaryNight">0</span></div>
+        <div class="month-stat"><span class="month-stat-label">Unknown</span><span class="month-stat-value" id="summaryUnknown">0</span></div>
+      </div>
+      <div class="summary-metrics">
+        <div class="metric-chip">Kalibrierung: <strong id="summaryCalibration">0</strong></div>
+        <div class="metric-chip">Manschette: <strong id="summaryCuff">0</strong></div>
+        <div class="metric-chip">Telefon: <strong id="summaryPhone">0</strong></div>
+      </div>
+    </div>
+
+    <div class="summary-card warning-summary">
+      <div class="summary-card-header">
+        <span class="summary-card-title">Parsing-Warnungen</span>
+      </div>
+      <ul class="warning-list" id="warningList">
+        <li>Keine Warnungen vorhanden.</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="dashboard-grid">
     <div class="measurement-column">
       <div class="column-header cuffless">
         <div class="column-title">
@@ -49,24 +104,15 @@
             <path d="M8 8V6a4 4 0 0 1 8 0v2"/>
             <line x1="12" y1="13" x2="12" y2="17"/>
           </svg>
-          Manschettenloses Gerät
+          Manschettenloses Geraet
         </div>
-        <div class="column-subtitle">Kontinuierliche / kontaktlose Messung</div>
+        <div class="column-subtitle">Hilo / Kalibrierung mit Manschette</div>
       </div>
 
       <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-value sys"   id="last-sys-cuffless">--</div>
-          <div class="stat-label">SYS letzte</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value dia"   id="last-dia-cuffless">--</div>
-          <div class="stat-label">DIA letzte</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value pulse" id="last-pulse-cuffless">--</div>
-          <div class="stat-label">Puls letzte</div>
-        </div>
+        <div class="stat-card"><div class="stat-value sys" id="last-sys-cuffless">--</div><div class="stat-label">SYS letzte</div></div>
+        <div class="stat-card"><div class="stat-value dia" id="last-dia-cuffless">--</div><div class="stat-label">DIA letzte</div></div>
+        <div class="stat-card"><div class="stat-value pulse" id="last-pulse-cuffless">--</div><div class="stat-label">Puls letzte</div></div>
       </div>
 
       <div class="chart-card">
@@ -83,18 +129,14 @@
       <div class="data-card">
         <div class="data-card-header">
           <span class="data-card-title">Messungen</span>
-          <span class="entry-count" id="count-cuffless">0 Einträge</span>
+          <span class="entry-count" id="count-cuffless">0 Eintraege</span>
         </div>
         <div class="data-list" id="list-cuffless">
-          <div class="empty-state">
-            Noch keine Messungen.<br>
-            <a href="configurator.html" style="color:#6366f1">Jetzt eintragen →</a>
-          </div>
+          <div class="empty-state">Noch keine Daten vorhanden.</div>
         </div>
       </div>
     </div>
 
-    <!-- ── Spalte 2: Telefonmessung ──────────────────────────────────────── -->
     <div class="measurement-column">
       <div class="column-header phone">
         <div class="column-title">
@@ -104,22 +146,13 @@
           </svg>
           Telefonmessung
         </div>
-        <div class="column-subtitle">Messung via Smartphone-App</div>
+        <div class="column-subtitle">Messung via Telefon oder App</div>
       </div>
 
       <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-value sys"   id="last-sys-phone">--</div>
-          <div class="stat-label">SYS letzte</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value dia"   id="last-dia-phone">--</div>
-          <div class="stat-label">DIA letzte</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value pulse" id="last-pulse-phone">--</div>
-          <div class="stat-label">Puls letzte</div>
-        </div>
+        <div class="stat-card"><div class="stat-value sys" id="last-sys-phone">--</div><div class="stat-label">SYS letzte</div></div>
+        <div class="stat-card"><div class="stat-value dia" id="last-dia-phone">--</div><div class="stat-label">DIA letzte</div></div>
+        <div class="stat-card"><div class="stat-value pulse" id="last-pulse-phone">--</div><div class="stat-label">Puls letzte</div></div>
       </div>
 
       <div class="chart-card">
@@ -136,18 +169,14 @@
       <div class="data-card">
         <div class="data-card-header">
           <span class="data-card-title">Messungen</span>
-          <span class="entry-count" id="count-phone">0 Einträge</span>
+          <span class="entry-count" id="count-phone">0 Eintraege</span>
         </div>
         <div class="data-list" id="list-phone">
-          <div class="empty-state">
-            Noch keine Messungen.<br>
-            <a href="configurator.html" style="color:#10b981">Jetzt eintragen →</a>
-          </div>
+          <div class="empty-state">Noch keine Daten vorhanden.</div>
         </div>
       </div>
     </div>
 
-    <!-- ── Spalte 3: Manschettenmessung ──────────────────────────────────── -->
     <div class="measurement-column">
       <div class="column-header cuff">
         <div class="column-title">
@@ -162,18 +191,9 @@
       </div>
 
       <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-value sys"   id="last-sys-cuff">--</div>
-          <div class="stat-label">SYS letzte</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value dia"   id="last-dia-cuff">--</div>
-          <div class="stat-label">DIA letzte</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value pulse" id="last-pulse-cuff">--</div>
-          <div class="stat-label">Puls letzte</div>
-        </div>
+        <div class="stat-card"><div class="stat-value sys" id="last-sys-cuff">--</div><div class="stat-label">SYS letzte</div></div>
+        <div class="stat-card"><div class="stat-value dia" id="last-dia-cuff">--</div><div class="stat-label">DIA letzte</div></div>
+        <div class="stat-card"><div class="stat-value pulse" id="last-pulse-cuff">--</div><div class="stat-label">Puls letzte</div></div>
       </div>
 
       <div class="chart-card">
@@ -190,18 +210,14 @@
       <div class="data-card">
         <div class="data-card-header">
           <span class="data-card-title">Messungen</span>
-          <span class="entry-count" id="count-cuff">0 Einträge</span>
+          <span class="entry-count" id="count-cuff">0 Eintraege</span>
         </div>
         <div class="data-list" id="list-cuff">
-          <div class="empty-state">
-            Noch keine Messungen.<br>
-            <a href="configurator.html" style="color:#f59e0b">Jetzt eintragen →</a>
-          </div>
+          <div class="empty-state">Noch keine Daten vorhanden.</div>
         </div>
       </div>
     </div>
-
-  </div><!-- /dashboard-grid -->
+  </div>
 </main>
 
 <div id="toast"></div>

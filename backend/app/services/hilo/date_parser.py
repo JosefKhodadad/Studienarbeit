@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from calendar import monthrange
+from dataclasses import dataclass
 from datetime import date, datetime
 import re
 
 GERMAN_MONTHS = {
     "januar": 1,
     "februar": 2,
-    "märz": 3,
     "maerz": 3,
+    "märz": 3,
+    "mÃ¤rz": 3,
+    "mã¤rz": 3,
     "april": 4,
     "mai": 5,
     "juni": 6,
@@ -39,10 +41,21 @@ def parse_german_date(value: str) -> date | None:
 
 
 def extract_report_period(text: str) -> ReportPeriod | None:
-    match = re.search(r"(januar|februar|m(?:ä|ae)rz|april|mai|juni|juli|august|september|oktober|november|dezember)\s+(20\d{2})", text, re.IGNORECASE)
+    match = re.search(
+        r"(januar|februar|m(?:ä|Ã¤|ae)rz|april|mai|juni|juli|august|september|oktober|november|dezember)\s+(20\d{2})",
+        text,
+        re.IGNORECASE,
+    )
     if not match:
         return None
-    month_name = match.group(1).lower().replace("ä", "ae")
+
+    month_name = (
+        match.group(1)
+        .lower()
+        .replace("Ã¤", "ae")
+        .replace("ã¤", "ae")
+        .replace("ä", "ae")
+    )
     return ReportPeriod(month=GERMAN_MONTHS[month_name], year=int(match.group(2)))
 
 
