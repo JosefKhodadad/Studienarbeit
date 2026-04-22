@@ -14,13 +14,15 @@ class TrainingStartRequest(BaseModel):
     """Optionaler Body für ``POST /api/ml/training/start``.
 
     ``use_csv_files`` (default: ``True``) verwendet die im Projekt mitgelieferten
-    Roh-CSV-Dateien als Trainingsdaten. ``use_repository`` schaltet zusätzlich
-    die im Repository liegenden Berichts-Messungen dazu (sinnvoll, wenn der
-    Nutzer schon eigene Hilo-PDFs importiert hat).
+    Roh-CSV-Dateien als Trainingsdaten. ``use_repository`` (default: ``True``)
+    schaltet zusätzlich die im Repository liegenden Berichts-Messungen dazu —
+    so lernt das Modell aus *allen* importierten Hilo-PDFs (Aufgabenstellung:
+    "aus allen importierten Dokumenten verarbeitet, damit das Modell das
+    Verhalten des Patienten genauer erfassen kann").
     """
 
     use_csv_files: bool = True
-    use_repository: bool = False
+    use_repository: bool = True
     age_years: float | None = None
 
 

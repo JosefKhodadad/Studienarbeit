@@ -33,6 +33,11 @@ import numpy as np
 # öffentlichen Schnittstelle: Persistierte Modelle speichern diese Liste in
 # ihren Metadaten, damit beim Laden klar ist, mit welcher Eingabeform das
 # Modell trainiert wurde.
+#
+# Die letzten drei Features kapseln den Vergleich mit den Nacht-/Tag-Referenz-
+# werten aus der PDF-Übersichtstabelle (siehe ``NightDayReference``). Liegen
+# keine Referenzen vor (z.B. beim CSV-Training ohne PDF-Kontext), bleiben sie
+# auf 0 — das Modell verliert dann Signal, behält aber seine Eingabeform.
 FEATURE_NAMES: tuple[str, ...] = (
     "sin_hour",
     "cos_hour",
@@ -51,13 +56,25 @@ FEATURE_NAMES: tuple[str, ...] = (
     "hr_local_trend",
     "minutes_since_last",
     "age_norm",
+    "night_ref_match",
+    "day_ref_match",
+    "night_ref_outlier",
 )
 
 # Indizes der Features, die NICHT pro Feature standardisiert werden, weil sie
-# bereits in einem festen Wertebereich liegen.
+# bereits in einem festen Wertebereich liegen ([0,1] oder normiert).
 _NO_STANDARDIZE_INDICES: frozenset[int] = frozenset(
-    {0, 1, 2, 3, 4, 5, 6, 16}
+    {0, 1, 2, 3, 4, 5, 6, 16, 17, 18, 19}
 )
+
+# 3 % Toleranz auf den Nacht-Mittelwert — Vorgabe des Aufgabenblattes
+# ("Lege auf den durchschnittlichen Nacht-Blutdruck eine Toleranz von 3 %").
+NIGHT_REFERENCE_TOLERANCE = 0.03
+
+# Außerhalb von ``OUTLIER_TOLERANCE_FACTOR × Toleranz`` markieren wir die
+# Messung als "klar außerhalb" — diese Hilfsgröße wird zusätzlich an den
+# Sleep-Phase-Detektor weitergereicht, um Aufwach-Episoden zu erkennen.
+OUTLIER_TOLERANCE_FACTOR = 3.0
 
 # Fenstergröße für lokale Trends (vor und nach der aktuellen Messung).
 _LOCAL_WINDOW = 3
@@ -72,6 +89,40 @@ _WEAK_NIGHT_END = 6  # exklusiv
 
 
 @dataclass(frozen=True)
+class NightDayReference:
+    """Referenzwerte aus der PDF-Übersichtstabelle (Seite 1).
+
+    Felder dürfen ``None`` sein, wenn die PDF die Spalte nicht enthielt; das
+    Feature-Engineering prüft das und gibt dann einen neutralen 0-Wert aus.
+
+    ``tolerance_fraction`` ist der relative Toleranzbereich um den Nacht-
+    Mittelwert (Default 3 %, Vorgabe aus der Aufgabenstellung).
+    """
+
+    night_sbp_mean: float | None = None
+    night_dbp_mean: float | None = None
+    night_hr_mean: float | None = None
+    night_sbp_min: float | None = None
+    night_sbp_max: float | None = None
+    day_sbp_mean: float | None = None
+    day_dbp_mean: float | None = None
+    day_hr_mean: float | None = None
+    tolerance_fraction: float = NIGHT_REFERENCE_TOLERANCE
+
+    def has_night_means(self) -> bool:
+        return all(
+            value is not None and value > 0
+            for value in (self.night_sbp_mean, self.night_dbp_mean, self.night_hr_mean)
+        )
+
+    def has_day_means(self) -> bool:
+        return all(
+            value is not None and value > 0
+            for value in (self.day_sbp_mean, self.day_dbp_mean, self.day_hr_mean)
+        )
+
+
+@dataclass(frozen=True)
 class FeatureMatrix:
     """Container für Features + Hilfsdaten für Constraint/Sleep-Phase."""
 
@@ -82,6 +133,7 @@ class FeatureMatrix:
     timestamps: list[datetime]      # für Sleep-Phase-Heuristik
     measurement_types: list[str]    # für Erklärbarkeit / Logging
     night_drop_score: np.ndarray    # shape (n_samples,), 0..1
+    night_ref_outlier: np.ndarray   # shape (n_samples,), 0..1 — Sleep-Phase nutzt dies
 
 
 # --- öffentliche Funktionen ----------------------------------------------
@@ -91,11 +143,17 @@ def build_features(
     *,
     age_years: float | None = None,
     weak_label_method: str = "rule",
+    reference: NightDayReference | None = None,
 ) -> FeatureMatrix:
     """Erzeuge Features + schwache Labels für eine Liste von Messungen.
 
     Die Reihenfolge der Zeilen entspricht der Reihenfolge in
     ``measurements``. Eingabe-Listen werden nicht mutiert.
+
+    ``reference`` enthält die aus der PDF-Übersichtstabelle geparsten Nacht-/
+    Tag-Mittelwerte. Sind sie vorhanden, fließen sie als zusätzliche Features
+    (``night_ref_match``, ``day_ref_match``, ``night_ref_outlier``) ein und
+    verstärken/abschwächen das schwache Label entsprechend.
     """
 
     if not measurements:
@@ -108,7 +166,12 @@ def build_features(
             timestamps=[],
             measurement_types=[],
             night_drop_score=np.zeros(0, dtype=np.float64),
+            night_ref_outlier=np.zeros(0, dtype=np.float64),
         )
+
+    ref = reference or NightDayReference()
+    has_night_ref = ref.has_night_means()
+    has_day_ref = ref.has_day_means()
 
     sorted_indices = _sorted_index_by_time(measurements)
     timestamps_sorted = [_parse_dt(measurements[i]["datetime"]) for i in sorted_indices]
@@ -136,6 +199,7 @@ def build_features(
     sample_weights = np.ones(n, dtype=np.float64)
     hours = np.zeros(n, dtype=np.float64)
     night_drop = np.zeros(n, dtype=np.float64)
+    night_outlier = np.zeros(n, dtype=np.float64)
     timestamps_orig: list[datetime] = [datetime.min] * n
     types_orig: list[str] = [""] * n
 
@@ -168,6 +232,30 @@ def build_features(
         dbp_delta = dbp - med_dbp
         hr_delta = hr - med_hr
 
+        # Vergleich mit den PDF-Referenzwerten: Wir bilden die relative
+        # Abweichung zu Nacht- bzw. Tag-Mittel (in Vielfachen der Toleranz)
+        # und mappen sie auf einen Match-Score in [0,1]. Score 1 = innerhalb
+        # der Toleranz, fällt mit wachsender Abweichung exponentiell ab.
+        night_match = 0.0
+        day_match = 0.0
+        outlier_flag = 0.0
+        if has_night_ref:
+            night_match, outlier_flag = _reference_match(
+                sbp, dbp, hr,
+                ref.night_sbp_mean or 0.0,
+                ref.night_dbp_mean or 0.0,
+                ref.night_hr_mean or 0.0,
+                ref.tolerance_fraction,
+            )
+        if has_day_ref:
+            day_match, _ = _reference_match(
+                sbp, dbp, hr,
+                ref.day_sbp_mean or 0.0,
+                ref.day_dbp_mean or 0.0,
+                ref.day_hr_mean or 0.0,
+                ref.tolerance_fraction,
+            )
+
         matrix[original_pos] = (
             sin_h, cos_h, sin_w, cos_w, dist_sleep_center,
             is_phone, is_armband,
@@ -176,6 +264,7 @@ def build_features(
             sbp_trend_sorted[sorted_pos], hr_trend_sorted[sorted_pos],
             minutes_since_sorted[sorted_pos],
             age_norm,
+            night_match, day_match, outlier_flag,
         )
 
         # Schwaches Label: Standard-Regel (22..06) ist die Basis. Telefonmessungen
@@ -184,12 +273,34 @@ def build_features(
         weak = _weak_night_label(hour, weak_label_method)
         if is_phone == 1.0:
             weak = 0.0
+
+        # Referenzwerte schärfen das schwache Label: Innerhalb der Nacht-Bande
+        # gewinnt das Nacht-Label an Sicherheit; ein klarer Outlier zur
+        # Nacht-Referenz im typischen Schlaffenster wird tendenziell als
+        # Aufwach-Punkt (also Tag) interpretiert. Telefonmessungen bleiben
+        # weiterhin Tag (siehe oben).
+        confidence = _label_confidence(hour)
+        if has_night_ref and is_phone != 1.0:
+            in_night_band = night_match > 0.7 and outlier_flag < 0.5
+            in_day_band = day_match > 0.7 and has_day_ref
+            if in_night_band:
+                weak = 1.0
+                confidence = max(confidence, 0.9)
+            elif outlier_flag >= 1.0 and (hour >= _WEAK_NIGHT_START or hour < _WEAK_NIGHT_END):
+                # Klar außerhalb der Nachtreferenz, obwohl die Uhrzeit im
+                # üblichen Nachtfenster liegt: behandeln wir als
+                # Aufwach-Kandidat (schwächeres Label, geringere Konfidenz).
+                weak = 0.0
+                confidence = max(confidence, 0.5)
+            elif in_day_band and 7.0 <= hour < 22.0:
+                weak = 0.0
+                confidence = max(confidence, 0.85)
         weak_labels[original_pos] = weak
 
         # Sample-Gewichte: nahe der Mitte der Nachtschiene bzw. weit
         # tagsüber sind die Labels sicherer; an den Rändern (06–08, 20–22)
         # weniger sicher. Diese weiche Gewichtung wirkt regularisierend.
-        sample_weights[original_pos] = _label_confidence(hour)
+        sample_weights[original_pos] = confidence
 
         # Night-Drop-Score: relative Senkung von SBP+HR vs. Tagesmedian,
         # auf 0..1 abgebildet. Nur als Hilfs-Feature für Sleep-Phase /
@@ -201,6 +312,7 @@ def build_features(
             rel_hr = max(0.0, (med_hr - hr) / med_hr)
             rel = min(1.0, 0.5 * rel_sbp / 0.15 + 0.5 * rel_hr / 0.20)
         night_drop[original_pos] = rel
+        night_outlier[original_pos] = outlier_flag
 
     return FeatureMatrix(
         matrix=matrix,
@@ -210,6 +322,7 @@ def build_features(
         timestamps=timestamps_orig,
         measurement_types=types_orig,
         night_drop_score=night_drop,
+        night_ref_outlier=night_outlier,
     )
 
 
@@ -343,3 +456,43 @@ def _normalize_age(age_years: float | None) -> float:
     if age_years is None:
         return 0.0
     return (float(age_years) - _AGE_REF) / _AGE_SPAN
+
+
+def _reference_match(
+    sbp: float,
+    dbp: float,
+    hr: float,
+    ref_sbp: float,
+    ref_dbp: float,
+    ref_hr: float,
+    tolerance_fraction: float,
+) -> tuple[float, float]:
+    """Bewerte Nähe zu einer Referenz (Nacht- oder Tag-Mittelwerte).
+
+    Rückgabe: ``(match_score, outlier_flag)``.
+
+    * ``match_score`` ∈ [0, 1] — 1, wenn alle drei Vitalwerte innerhalb der
+      Toleranz liegen, fällt mit wachsender Abweichung exponentiell ab.
+    * ``outlier_flag`` — 1.0, sobald mindestens ein Vital weiter als
+      ``OUTLIER_TOLERANCE_FACTOR × Toleranz`` vom Referenzwert entfernt ist;
+      sonst 0.0. Diese Größe wandert unverändert in das Modell-Feature
+      ``night_ref_outlier`` und in den Sleep-Phase-Detektor.
+    """
+
+    def _rel_distance(value: float, ref: float) -> float:
+        if ref <= 0.0:
+            return 0.0
+        return abs(value - ref) / ref
+
+    distances = (
+        _rel_distance(sbp, ref_sbp),
+        _rel_distance(dbp, ref_dbp),
+        _rel_distance(hr, ref_hr),
+    )
+
+    tol = max(1e-6, float(tolerance_fraction))
+    # Excess: wieviel Vielfache der Toleranz reißt der schlechteste Wert.
+    excess = max(d / tol for d in distances)
+    match_score = float(math.exp(-max(0.0, excess - 1.0)))
+    outlier_flag = 1.0 if excess >= OUTLIER_TOLERANCE_FACTOR else 0.0
+    return match_score, outlier_flag

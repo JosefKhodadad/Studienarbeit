@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Literal
 
+from .feature_engineering import NightDayReference
 from .training_pipeline import TrainingResult, train_from_csv, train_from_measurements
 
 
@@ -95,6 +96,7 @@ class TrainingJobManager:
         model_dir: Path | None = None,
         notes: str = "",
         sources: list[str] | None = None,
+        reference: NightDayReference | None = None,
     ) -> dict:
         # Wenn der Aufrufer keine Quellen mitliefert, fallen wir auf eine
         # generische Beschreibung zurück, damit der Status-Endpunkt nicht
@@ -109,6 +111,7 @@ class TrainingJobManager:
                 age_years=age_years,
                 model_dir=model_dir,
                 notes=notes,
+                reference=reference,
             ),
         )
 

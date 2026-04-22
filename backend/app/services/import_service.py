@@ -24,6 +24,7 @@ from app.schemas.hilo_import import (
 )
 from app.services.aggregation_service import VALID_MEASUREMENT_TYPES, AggregationService
 from app.services.classification_service import NightDayClassifier
+from app.services.ml.feature_engineering import NightDayReference
 from app.services.ml.sleep_phase import detect_sleep_episodes, expected_sleep_range
 from app.services.parser_service import HiloParserService
 from app.services.repository import InMemoryImportRepository
@@ -119,7 +120,7 @@ class ImportService:
     def get_unified_measurements(self) -> UnifiedMeasurementsResponse:
         from datetime import datetime as _dt
 
-        payloads = self._repository.iter_all_reports()
+        payloads = list(self._repository.iter_all_reports())
         measurements: list[dict] = []
         report_items: list[ReportListItem] = []
 
@@ -130,6 +131,11 @@ class ImportService:
         methods_seen: set[str] = set()
         sleep_episodes: list[dict] = []
         latest_age: float | None = None
+
+        # Cross-Report-Aggregation: Mittelwerte aus allen PDF-Übersichten
+        # einsammeln, damit das Dashboard nicht nur den aktuellen Bericht,
+        # sondern den gesamten importierten Datenbestand zeigen kann.
+        cross_avg = _CrossReportAggregator()
 
         for payload in payloads:
             report = payload.get("report", {}) or {}
@@ -145,14 +151,23 @@ class ImportService:
                 except (TypeError, ValueError):
                     pass
 
+            reference = _build_reference_from_summary(summary)
+            cross_avg.absorb(summary)
+
             classifications = self._classify(
                 raw_measurements,
                 expected_night_count=int(expected_night) if expected_night else None,
                 age_years=float(age_years) if age_years is not None else None,
+                reference=reference,
             )
+
+            # Outlier-Maske aus dem Feature-Engineering ziehen, damit der
+            # Sleep-Phase-Detektor Aufwach-Phasen erkennen kann.
+            outlier_mask = _compute_outlier_mask(raw_measurements, reference)
 
             timestamps: list[_dt] = []
             is_night_arr: list[bool] = []
+            ts_outliers: list[float] = []
             for measurement, result in zip(raw_measurements, classifications):
                 methods_seen.add(result.method)
                 enriched = dict(measurement)
@@ -168,6 +183,8 @@ class ImportService:
                     is_night_arr.append(bool(result.is_night))
                 except (KeyError, ValueError):
                     continue
+                idx = len(timestamps) - 1
+                ts_outliers.append(float(outlier_mask[idx]) if idx < len(outlier_mask) else 0.0)
 
             if timestamps:
                 import numpy as _np
@@ -176,6 +193,7 @@ class ImportService:
                     timestamps,
                     _np.asarray(is_night_arr, dtype=bool),
                     age_years=float(age_years) if age_years is not None else None,
+                    night_ref_outlier=_np.asarray(ts_outliers, dtype=_np.float64),
                 )
                 for ep in episodes:
                     payload_ep = ep.to_dict()
@@ -198,6 +216,7 @@ class ImportService:
                 "warnings": [],
                 "sleep_episodes": sleep_episodes,
                 "expected_sleep_hours": expected_range,
+                "cross_report_averages": cross_avg.as_dict(),
             }
         )
 
@@ -207,9 +226,21 @@ class ImportService:
         *,
         expected_night_count: int | None,
         age_years: float | None,
+        reference: NightDayReference | None = None,
     ):
-        # Bevorzugt die age_years-Variante (KerasNightClassifier), fällt
-        # andernfalls auf die klassische Signatur (NightDayClassifier) zurück.
+        # Bevorzugt die volle Signatur (KerasNightClassifier mit reference),
+        # fällt sonst auf age_years-only und schließlich die klassische
+        # Signatur (NightDayClassifier) zurück. So bleibt der Service mit
+        # allen drei Klassifikator-Varianten kompatibel.
+        try:
+            return self._classifier.classify(
+                measurements,
+                expected_night_count=expected_night_count,
+                age_years=age_years,
+                reference=reference,
+            )
+        except TypeError:
+            pass
         try:
             return self._classifier.classify(
                 measurements,
@@ -368,6 +399,118 @@ class ImportService:
                 else ENTRY_STATUS_RESTORED
             )
         return ENTRY_STATUS_EDITED
+
+
+def _build_reference_from_summary(summary: dict | None) -> NightDayReference | None:
+    """Erzeuge eine ``NightDayReference`` aus dem ``summary``-Block.
+
+    ``summary["night"]`` und ``summary["day_rest"]`` liefern Mittelwerte für
+    SBP, DBP und HR (jeweils ``None``-fähig). Liegen die nötigen Felder vor,
+    bauen wir die Referenz für das Modell — sonst ``None``, dann lernt das
+    Modell ohne Referenz weiter (rein aus den klassischen Features).
+    """
+
+    if not summary:
+        return None
+    night = summary.get("night") or {}
+    day = summary.get("day_rest") or {}
+
+    def _f(value: object) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    night_sbp = _f(night.get("mean"))
+    night_dbp = _f(night.get("mean_diastolic"))
+    night_hr = _f(night.get("mean_heart_rate"))
+    if night_sbp is None and night_dbp is None and night_hr is None:
+        return None
+    return NightDayReference(
+        night_sbp_mean=night_sbp,
+        night_dbp_mean=night_dbp,
+        night_hr_mean=night_hr,
+        night_sbp_min=_f(night.get("min")),
+        night_sbp_max=_f(night.get("max")),
+        day_sbp_mean=_f(day.get("mean")),
+        day_dbp_mean=_f(day.get("mean_diastolic")),
+        day_hr_mean=_f(day.get("mean_heart_rate")),
+    )
+
+
+def _compute_outlier_mask(measurements: list[dict], reference: NightDayReference | None) -> list[float]:
+    """Berechne pro Messung ein 0/1-Outlier-Flag gegen die Nacht-Referenz.
+
+    Wir greifen dafür auf das vorhandene Feature-Engineering zurück, damit
+    die Logik (3 % Toleranz, ``OUTLIER_TOLERANCE_FACTOR × Toleranz``)
+    konsistent zwischen Modell-Input und Sleep-Phase-Detektor bleibt.
+    """
+
+    if not measurements or reference is None or not reference.has_night_means():
+        return [0.0] * len(measurements)
+    from app.services.ml.feature_engineering import build_features
+
+    fm = build_features(measurements, reference=reference)
+    return [float(value) for value in fm.night_ref_outlier.tolist()]
+
+
+class _CrossReportAggregator:
+    """Sammelt Nacht-/Tag-Mittelwerte aus PDF-Übersichten über alle Berichte.
+
+    Die Aggregation gewichtet pro Bericht mit dessen Messanzahl, damit ein
+    Report mit 50 Nachtmessungen mehr zählt als einer mit 5. Fehlende Felder
+    werden konsequent ignoriert, statt mit 0 ein Mittel zu verfälschen.
+    """
+
+    def __init__(self) -> None:
+        self._buckets: dict[str, list[tuple[float, int]]] = {
+            "night_systolic": [],
+            "night_diastolic": [],
+            "night_heart_rate": [],
+            "day_rest_systolic": [],
+            "day_rest_diastolic": [],
+            "day_rest_heart_rate": [],
+        }
+        self._reports = 0
+
+    def absorb(self, summary: dict | None) -> None:
+        if not summary:
+            return
+        self._reports += 1
+        night = summary.get("night") or {}
+        day = summary.get("day_rest") or {}
+        n_night = int(night.get("measurements") or 0) or 1
+        n_day = int(day.get("measurements") or 0) or 1
+        self._add("night_systolic", night.get("mean"), n_night)
+        self._add("night_diastolic", night.get("mean_diastolic"), n_night)
+        self._add("night_heart_rate", night.get("mean_heart_rate"), n_night)
+        self._add("day_rest_systolic", day.get("mean"), n_day)
+        self._add("day_rest_diastolic", day.get("mean_diastolic"), n_day)
+        self._add("day_rest_heart_rate", day.get("mean_heart_rate"), n_day)
+
+    def _add(self, key: str, value: object, weight: int) -> None:
+        if value is None or weight <= 0:
+            return
+        try:
+            self._buckets[key].append((float(value), int(weight)))
+        except (TypeError, ValueError):
+            return
+
+    def as_dict(self) -> dict:
+        result: dict[str, float | int | None] = {"report_count": self._reports}
+        for key, samples in self._buckets.items():
+            if not samples:
+                result[key] = None
+                continue
+            total_w = sum(w for _, w in samples)
+            if total_w <= 0:
+                result[key] = None
+                continue
+            weighted_sum = sum(v * w for v, w in samples)
+            result[key] = round(weighted_sum / total_w, 2)
+        return result
 
 
 def _validate_iso_datetime(value: str) -> str:

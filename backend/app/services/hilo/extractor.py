@@ -175,34 +175,80 @@ def _extract_summary_line(page_text: str, labels: list[str]) -> dict[str, float 
 
 
 def _extract_tabular_summary(page_text: str) -> dict[str, dict[str, float | int | None]]:
-    empty = {"mean": None, "sd": None, "max": None, "min": None, "measurements": None}
+    """Read the overview table on page 1 and split values per vital.
+
+    Layout in the Hilo PDF (per row):
+        Tag/Ruhe                Nacht                   Alle Messungen
+        SBP  DBP  HR            SBP  DBP  HR            SBP  DBP  HR
+
+    Backwards-compat: ``mean`` / ``sd`` / ``max`` / ``min`` keep referring to
+    the *systolic* value as before. New keys (``mean_diastolic`` /
+    ``mean_heart_rate`` / ``min_diastolic`` / ``min_heart_rate`` /
+    ``max_diastolic`` / ``max_heart_rate``) carry the additional vitals so the
+    night-reference logic can use them. ``measurements`` stays a single integer
+    (count of rows in that section).
+    """
+
+    empty: dict[str, float | int | None] = {
+        "mean": None, "sd": None, "max": None, "min": None, "measurements": None,
+        "mean_diastolic": None, "mean_heart_rate": None,
+        "min_diastolic": None, "min_heart_rate": None,
+        "max_diastolic": None, "max_heart_rate": None,
+    }
     result = {
         "day_rest": dict(empty),
         "night": dict(empty),
         "all_measurements": dict(empty),
     }
 
+    # Mapping label -> primary SBP key, plus optional DBP/HR sister keys.
+    # ``Messungen`` is intentionally *only* SBP-style (one count per column),
+    # so we keep it on the legacy single-value path further below.
     row_labels = [
-        ("Mittelwert", "mean", float),
-        ("SD", "sd", float),
-        ("Max", "max", float),
-        ("Mindest", "min", float),
-        ("Messungen", "measurements", int),
+        ("Mittelwert", "mean", "mean_diastolic", "mean_heart_rate", float),
+        ("SD", "sd", None, None, float),
+        ("Max", "max", "max_diastolic", "max_heart_rate", float),
+        ("Mindest", "min", "min_diastolic", "min_heart_rate", float),
     ]
 
-    for label, key, caster in row_labels:
+    for label, key_sbp, key_dbp, key_hr, caster in row_labels:
         numbers = _numbers_after_label(page_text, label, count=9)
         if not numbers:
             continue
         try:
-            day_val = _cast_number(numbers[0], caster)
-            night_val = _cast_number(numbers[3], caster)
-            all_val = _cast_number(numbers[6], caster)
+            day_sbp = _cast_number(numbers[0], caster)
+            day_dbp = _cast_number(numbers[1], caster) if key_dbp else None
+            day_hr = _cast_number(numbers[2], caster) if key_hr else None
+            night_sbp = _cast_number(numbers[3], caster)
+            night_dbp = _cast_number(numbers[4], caster) if key_dbp else None
+            night_hr = _cast_number(numbers[5], caster) if key_hr else None
+            all_sbp = _cast_number(numbers[6], caster)
+            all_dbp = _cast_number(numbers[7], caster) if key_dbp else None
+            all_hr = _cast_number(numbers[8], caster) if key_hr else None
         except (ValueError, IndexError):
             continue
-        result["day_rest"][key] = day_val
-        result["night"][key] = night_val
-        result["all_measurements"][key] = all_val
+        result["day_rest"][key_sbp] = day_sbp
+        result["night"][key_sbp] = night_sbp
+        result["all_measurements"][key_sbp] = all_sbp
+        if key_dbp:
+            result["day_rest"][key_dbp] = day_dbp
+            result["night"][key_dbp] = night_dbp
+            result["all_measurements"][key_dbp] = all_dbp
+        if key_hr:
+            result["day_rest"][key_hr] = day_hr
+            result["night"][key_hr] = night_hr
+            result["all_measurements"][key_hr] = all_hr
+
+    # ``Messungen`` is a row of three integers (one per column); we still need
+    # to populate it so the rest of the pipeline knows the per-class counts.
+    counts = _numbers_after_label(page_text, "Messungen", count=3)
+    if counts:
+        try:
+            result["day_rest"]["measurements"] = int(float(counts[0].replace(",", ".")))
+            result["night"]["measurements"] = int(float(counts[1].replace(",", ".")))
+            result["all_measurements"]["measurements"] = int(float(counts[2].replace(",", ".")))
+        except (ValueError, IndexError):
+            pass
 
     return result
 

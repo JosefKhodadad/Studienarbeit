@@ -500,12 +500,57 @@ function renderReportSummary(viewModel) {
   setText('summaryCuff', byType.cuff_measurement ?? 0);
   setText('summaryPhone', byType.phone_measurement ?? 0);
 
+  renderBpAverages(summary);
+
   const warningList = document.getElementById('warningList');
   if (warningList) {
     warningList.innerHTML = (viewModel.warnings || []).length > 0
       ? viewModel.warnings.map((warning) => `<li>${warning}</li>`).join('')
       : '<li>Keine Warnungen vorhanden.</li>';
   }
+}
+
+function renderBpAverages(currentSummary) {
+  // Bevorzugt die übergreifenden Cross-Report-Mittelwerte (alle importierten
+  // Berichte zusammen). Fällt auf den aktuellen Bericht zurück, falls die
+  // Unified-View noch nicht geladen wurde — so funktioniert die Anzeige
+  // sowohl direkt nach einem Import als auch im Multi-Bericht-Modus.
+  const cross = _unifiedPayload?.cross_report_averages || null;
+  const reportCount = cross?.report_count || 0;
+  const useCross = cross && reportCount > 0;
+
+  const summary = currentSummary || {};
+  const night = summary.night || {};
+  const day = summary.day_rest || {};
+
+  const nightSys = useCross ? cross.night_systolic : night.mean;
+  const nightDia = useCross ? cross.night_diastolic : night.mean_diastolic;
+  const nightHr = useCross ? cross.night_heart_rate : night.mean_heart_rate;
+  const daySys = useCross ? cross.day_rest_systolic : day.mean;
+  const dayDia = useCross ? cross.day_rest_diastolic : day.mean_diastolic;
+  const dayHr = useCross ? cross.day_rest_heart_rate : day.mean_heart_rate;
+
+  setText('avgNightBp', formatBpPair(nightSys, nightDia));
+  setText('avgNightHr', formatBpSingle(nightHr, 'bpm'));
+  setText('avgDayBp', formatBpPair(daySys, dayDia));
+  setText('avgDayHr', formatBpSingle(dayHr, 'bpm'));
+
+  const scopeLabel = useCross
+    ? `Quelle: ${reportCount} importierte Berichte (gewichtet nach Messanzahl)`
+    : 'Quelle: aktueller Bericht';
+  setText('avgScopeLabel', scopeLabel);
+}
+
+function formatBpPair(sys, dia) {
+  const s = Number.isFinite(Number(sys)) ? Math.round(Number(sys)) : null;
+  const d = Number.isFinite(Number(dia)) ? Math.round(Number(dia)) : null;
+  if (s === null && d === null) return '--';
+  return `${s ?? '--'} / ${d ?? '--'} mmHg`;
+}
+
+function formatBpSingle(value, unit) {
+  const v = Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
+  return v === null ? '--' : `${v} ${unit}`;
 }
 
 function renderDashboardColumns(viewModel) {

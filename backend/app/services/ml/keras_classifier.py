@@ -26,7 +26,12 @@ from app.services.classification_service import (
 )
 
 from .constraint import assign_with_constraint
-from .feature_engineering import build_features, standardize
+from .feature_engineering import (
+    FEATURE_NAMES,
+    NightDayReference,
+    build_features,
+    standardize,
+)
 from .model_store import LoadedModel, default_model_dir, has_model, load_model
 
 
@@ -66,6 +71,7 @@ class KerasNightClassifier:
         *,
         expected_night_count: int | None = None,
         age_years: float | None = None,
+        reference: NightDayReference | None = None,
     ) -> list[ClassificationResult]:
         if not measurements:
             return []
@@ -77,7 +83,9 @@ class KerasNightClassifier:
             )
 
         try:
-            scores = self._predict(loaded, measurements, age_years=age_years)
+            scores = self._predict(
+                loaded, measurements, age_years=age_years, reference=reference
+            )
         except Exception as exc:
             _logger.exception("Keras-Inferenz fehlgeschlagen, falle zurück: %s", exc)
             return self._fallback.classify(
@@ -120,10 +128,26 @@ class KerasNightClassifier:
             mtime = (self._model_dir / "night_model.keras").stat().st_mtime
             if self._cache is None or self._cache.mtime != mtime:
                 try:
-                    self._cache = _CachedModel(loaded=load_model(self._model_dir), mtime=mtime)
+                    loaded = load_model(self._model_dir)
                 except Exception as exc:
                     _logger.exception("Modell konnte nicht geladen werden: %s", exc)
                     self._cache = None
+                    return None
+                # Sanity-Check: Wurde das gespeicherte Modell mit den aktuellen
+                # Features trainiert? Wenn nicht (z. B. nach einer Erweiterung
+                # der Feature-Liste), ignorieren wir es bis zum Re-Training und
+                # nutzen den klassischen Fallback. So bleibt das System nach
+                # Code-Updates immer noch antwortfähig.
+                stored_features = tuple(loaded.card.feature_names or ())
+                if stored_features != FEATURE_NAMES:
+                    _logger.warning(
+                        "Modell hat veraltete Feature-Liste (%d statt %d Spalten)"
+                        " — verwende Heuristik bis zum nächsten Training.",
+                        len(stored_features), len(FEATURE_NAMES),
+                    )
+                    self._cache = None
+                    return None
+                self._cache = _CachedModel(loaded=loaded, mtime=mtime)
             return self._cache.loaded if self._cache else None
 
     def _predict(
@@ -132,10 +156,11 @@ class KerasNightClassifier:
         measurements: list[dict],
         *,
         age_years: float | None,
+        reference: NightDayReference | None,
     ) -> np.ndarray:
         from .night_model import predict_scores  # lazy import
 
-        fm = build_features(measurements, age_years=age_years)
+        fm = build_features(measurements, age_years=age_years, reference=reference)
         if fm.matrix.size == 0:
             return np.zeros(0, dtype=np.float64)
         scaled, _ = standardize(fm.matrix, stats=loaded.feature_stats)

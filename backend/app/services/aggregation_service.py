@@ -257,20 +257,46 @@ class AggregationService:
 
     def _build_section(self, raw_summary: dict | None, key: str, measurements: list[dict]) -> SummarySection:
         source = (raw_summary or {}).get(key) or {}
-        if any(source.get(metric) is not None for metric in ("mean", "sd", "max", "min", "measurements")):
-            return SummarySection.model_validate(source)
-
-        values = [item["systolic"] for item in measurements]
-        if not values:
-            return SummarySection()
-
-        return SummarySection(
-            mean=round(mean(values), 2),
-            sd=round(pstdev(values), 2) if len(values) > 1 else 0.0,
-            max=max(values),
-            min=min(values),
-            measurements=len(values),
+        # If the PDF table provided at least the systolic mean, trust it for
+        # all reference values that exist there. Missing DBP/HR fields are
+        # backfilled from the actual measurements so the dashboard never has
+        # to deal with partial sections.
+        from_pdf = SummarySection.model_validate(source) if source else SummarySection()
+        has_any_pdf_value = any(
+            getattr(from_pdf, metric) is not None
+            for metric in ("mean", "sd", "max", "min", "measurements")
         )
+
+        sbp_values = [item["systolic"] for item in measurements]
+        dbp_values = [item["diastolic"] for item in measurements]
+        hr_values = [item["heart_rate"] for item in measurements]
+
+        derived = SummarySection()
+        if sbp_values:
+            derived = SummarySection(
+                mean=round(mean(sbp_values), 2),
+                sd=round(pstdev(sbp_values), 2) if len(sbp_values) > 1 else 0.0,
+                max=max(sbp_values),
+                min=min(sbp_values),
+                measurements=len(sbp_values),
+                mean_diastolic=round(mean(dbp_values), 2) if dbp_values else None,
+                mean_heart_rate=round(mean(hr_values), 2) if hr_values else None,
+                min_diastolic=min(dbp_values) if dbp_values else None,
+                min_heart_rate=min(hr_values) if hr_values else None,
+                max_diastolic=max(dbp_values) if dbp_values else None,
+                max_heart_rate=max(hr_values) if hr_values else None,
+            )
+
+        if not has_any_pdf_value:
+            return derived
+
+        # Merge: PDF wins when it has a value, derived fills the gaps.
+        merged = derived.model_dump()
+        pdf_dump = from_pdf.model_dump()
+        for field_name, value in pdf_dump.items():
+            if value is not None:
+                merged[field_name] = value
+        return SummarySection.model_validate(merged)
 
     def _build_warnings(self, measurements: list[dict], report: dict, raw_summary: dict | None) -> list[str]:
         warnings: list[str] = []

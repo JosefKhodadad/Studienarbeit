@@ -17,6 +17,7 @@ from app.schemas.ml import (
     TrainingStartRequest,
     TrainingStatusResponse,
 )
+from app.services.ml.feature_engineering import NightDayReference
 from app.services.ml.keras_classifier import KerasNightClassifier
 from app.services.ml.training_jobs import TrainingJobManager
 from app.services.ml.training_pipeline import load_measurements_from_csv
@@ -55,15 +56,21 @@ def start_training(
 
     measurements: list[dict] = []
     sources: list[str] = []
+    repo_summaries: list[dict] = []
     if request.use_csv_files:
         csvs = _csv_paths()
         if csvs:
             measurements.extend(load_measurements_from_csv(csvs))
             sources.extend(p.name for p in csvs)
     if request.use_repository:
+        repo_count_before = len(measurements)
         for payload in repo.iter_all_reports():
             measurements.extend(payload.get("measurements") or [])
-        sources.append(f"repo:{len(measurements)} Messungen")
+            summary = payload.get("summary")
+            if summary:
+                repo_summaries.append(summary)
+        repo_added = len(measurements) - repo_count_before
+        sources.append(f"repo:{repo_added} Messungen aus {len(repo_summaries)} Berichten")
 
     if not measurements:
         raise HTTPException(
@@ -74,13 +81,66 @@ def start_training(
             ),
         )
 
+    reference = _aggregate_reference(repo_summaries)
+
     jobs.start_from_measurements(
         measurements,
         age_years=request.age_years,
         notes="; ".join(sources),
         sources=sources,
+        reference=reference,
     )
     return _status_response(jobs, classifier)
+
+
+def _aggregate_reference(summaries: list[dict]) -> NightDayReference | None:
+    """Mittele die Nacht-/Tag-Referenzwerte über alle vorhandenen Berichte.
+
+    Damit lernt das Modell mit *einem* konsistenten Erwartungsband, das den
+    typischen Patientenrhythmus über alle bisher importierten Berichte
+    abbildet. Ein Bericht ohne PDF-Übersicht (kein Mittelwert) wird einfach
+    übersprungen.
+    """
+
+    if not summaries:
+        return None
+
+    def _gather(section_key: str, field_key: str) -> tuple[float, int]:
+        total, weight = 0.0, 0
+        for summary in summaries:
+            section = summary.get(section_key) or {}
+            value = section.get(field_key)
+            count = int(section.get("measurements") or 0) or 1
+            if value is None:
+                continue
+            try:
+                total += float(value) * count
+                weight += count
+            except (TypeError, ValueError):
+                continue
+        return total, weight
+
+    def _mean(section_key: str, field_key: str) -> float | None:
+        total, weight = _gather(section_key, field_key)
+        if weight <= 0:
+            return None
+        return total / weight
+
+    night_sbp = _mean("night", "mean")
+    night_dbp = _mean("night", "mean_diastolic")
+    night_hr = _mean("night", "mean_heart_rate")
+    if night_sbp is None and night_dbp is None and night_hr is None:
+        return None
+    return NightDayReference(
+        night_sbp_mean=night_sbp,
+        night_dbp_mean=night_dbp,
+        night_hr_mean=night_hr,
+        night_sbp_min=_mean("night", "min"),
+        night_sbp_max=_mean("night", "max"),
+        day_sbp_mean=_mean("day_rest", "mean"),
+        day_dbp_mean=_mean("day_rest", "mean_diastolic"),
+        day_hr_mean=_mean("day_rest", "mean_heart_rate"),
+    )
 
 
 @router.get("/training/status", response_model=TrainingStatusResponse)

@@ -14,11 +14,20 @@ class ReportInfo(BaseModel):
 
 
 class SummarySection(BaseModel):
+    # Backwards-compatible: ``mean`` / ``sd`` / ``max`` / ``min`` keep referring
+    # to systolic. The diastolic and heart-rate fields are new and may be
+    # ``None`` in older payloads.
     mean: float | None = None
     sd: float | None = None
     max: float | None = None
     min: float | None = None
     measurements: int | None = None
+    mean_diastolic: float | None = None
+    mean_heart_rate: float | None = None
+    min_diastolic: float | None = None
+    min_heart_rate: float | None = None
+    max_diastolic: float | None = None
+    max_heart_rate: float | None = None
 
 
 class MeasurementTypeBreakdown(BaseModel):
@@ -83,6 +92,12 @@ class UnifiedMeasurement(BloodPressureMeasurement):
     classification_method: str | None = None
 
 
+class ArousalEventSummary(BaseModel):
+    start: str
+    end: str
+    measurement_indices: list[int] = Field(default_factory=list)
+
+
 class SleepEpisodeSummary(BaseModel):
     start: str
     end: str
@@ -91,6 +106,25 @@ class SleepEpisodeSummary(BaseModel):
     measurement_indices: list[int] = Field(default_factory=list)
     confidence: float = 0.0
     report_id: str | None = None
+    arousal_events: list[ArousalEventSummary] = Field(default_factory=list)
+
+
+class CrossReportAverages(BaseModel):
+    """Aggregated SBP/DBP/HR averages across all imported reports.
+
+    Computed from the per-report PDF overview tables when available, with a
+    fallback to the actually-classified measurements. Used by the dashboard
+    to show a multi-document night/day picture instead of just the currently
+    selected report.
+    """
+
+    night_systolic: float | None = None
+    night_diastolic: float | None = None
+    night_heart_rate: float | None = None
+    day_rest_systolic: float | None = None
+    day_rest_diastolic: float | None = None
+    day_rest_heart_rate: float | None = None
+    report_count: int = 0
 
 
 class UnifiedMeasurementsResponse(BaseModel):
@@ -100,6 +134,7 @@ class UnifiedMeasurementsResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     sleep_episodes: list[SleepEpisodeSummary] = Field(default_factory=list)
     expected_sleep_hours: tuple[float, float] | None = None
+    cross_report_averages: CrossReportAverages = Field(default_factory=CrossReportAverages)
 
 
 class DirectImportPatient(BaseModel):

@@ -24,7 +24,12 @@ import numpy as np
 # Backend vor Keras-Import setzen.
 os.environ.setdefault("KERAS_BACKEND", "torch")
 
-from .feature_engineering import FEATURE_NAMES, build_features, standardize
+from .feature_engineering import (
+    FEATURE_NAMES,
+    NightDayReference,
+    build_features,
+    standardize,
+)
 from .model_store import (
     LoadedModel,
     ModelCard,
@@ -108,11 +113,17 @@ def train_from_measurements(
     config: TrainingConfig | None = None,
     model_dir: Path | None = None,
     notes: str = "",
+    reference: NightDayReference | None = None,
 ) -> TrainingResult:
     """Trainiere das Modell aus einer Liste vorbereiteter Messungen.
 
     Persistiert das Ergebnis im Modellverzeichnis und gibt die wichtigsten
     Metriken zurück.
+
+    ``reference`` wird (sofern gesetzt) an :func:`build_features` weitergereicht
+    und schärft die schwachen Labels: Messungen innerhalb der Nacht-Bande
+    werden als sicher-Nacht behandelt, klare Outlier in typischen Schlaf-
+    stunden eher als Aufwachpunkte.
     """
 
     if not measurements:
@@ -121,7 +132,7 @@ def train_from_measurements(
     cfg = config or TrainingConfig()
     target_dir = Path(model_dir) if model_dir else default_model_dir()
 
-    fm = build_features(measurements, age_years=age_years)
+    fm = build_features(measurements, age_years=age_years, reference=reference)
     matrix, stats = standardize(fm.matrix)
     labels = fm.weak_labels.astype(np.float32)
     sample_weights = fm.sample_weights.astype(np.float32)
