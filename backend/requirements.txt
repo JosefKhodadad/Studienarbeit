@@ -1,0 +1,18 @@
+fastapi==0.115.2
+uvicorn==0.32.0
+pymupdf==1.24.12
+pdfplumber==0.11.9
+python-multipart==0.0.12
+pydantic[email]==2.9.2
+pytest==8.3.3
+httpx==0.27.2
+numpy==2.1.2
+keras==3.14.0
+# PyTorch wird als Keras-Backend genutzt (CPU-only).
+# Hinweis: Auf Windows-Pfaden (z. B. OneDrive) scheitert die TensorFlow-
+# Installation an Pfadlängenlimits. Wir nutzen daher Keras 3 mit dem
+# PyTorch-Backend. Die Keras-API ist identisch; ein späterer Wechsel auf
+# das TF-Backend ist ohne Codeänderung möglich.
+# Installation:
+#   pip install torch==2.4.1+cpu --index-url https://download.pytorch.org/whl/cpu
+torch==2.4.1

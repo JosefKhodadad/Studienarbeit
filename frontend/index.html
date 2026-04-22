@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blutdruck Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+</head>
+<body>
+<nav>
+  <a href="index.html" class="nav-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="url(#grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <defs>
+        <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#6366f1"/>
+          <stop offset="100%" stop-color="#10b981"/>
+        </linearGradient>
+      </defs>
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+    BlutdruckMonitor
+  </a>
+  <div class="nav-links">
+    <a href="index.html" class="nav-link active">Dashboard</a>
+    <a href="configurator.html" class="nav-link">Konfigurator</a>
+  </div>
+</nav>
+
+<main id="dashboard-root">
+  <div class="page-header">
+    <h1 class="page-title">Blutdruck Uebersicht</h1>
+    <p class="page-subtitle" id="lastUpdate">
+      Noch keine importierten Daten vorhanden. Sie koennen weiterhin Daten im
+      <a href="configurator.html" class="inline-link">Konfigurator</a> eintragen.
+    </p>
+  </div>
+
+  <section class="import-card">
+    <div class="import-copy">
+      <div class="import-title">Hilo PDF importieren</div>
+      <div class="import-subtitle">
+        Laden Sie einen Monatsbericht hoch. Das Backend extrahiert Monat, Person,
+        Messwerte, Zeitstempel und die Messart per Icon-Erkennung.
+      </div>
+    </div>
+    <form id="pdfImportForm" class="import-form">
+      <input id="pdfFile" type="file" accept=".pdf,application/pdf" hidden />
+      <label for="pdfFile" class="btn btn-secondary file-picker" id="pdfFileLabel">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <span class="file-picker-text">PDF auswaehlen</span>
+      </label>
+      <button type="submit" class="btn btn-primary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Import starten
+      </button>
+    </form>
+    <div class="import-status" id="importStatus">Bereit fuer den PDF-Import.</div>
+  </section>
+
+  <section class="reports-bar" id="reportsBar" hidden>
+    <div class="reports-bar-header">
+      <span class="reports-bar-title">Importierte Berichte</span>
+      <span class="reports-bar-hint">Klicken zum Aktivieren - Papierkorb loescht einen Bericht komplett</span>
+    </div>
+    <div class="reports-bar-chips" id="reportsBarChips"></div>
+  </section>
+
+  <section class="report-summary" id="reportSummary">
+    <div class="summary-card patient-summary">
+      <div class="summary-card-header">
+        <span class="summary-card-title">Person und Bericht</span>
+        <span class="summary-pill" id="reportMonthLabel">Kein Bericht</span>
+      </div>
+      <div class="summary-grid">
+        <div class="summary-item"><span class="summary-label">Name</span><span class="summary-value" id="summaryName">-</span></div>
+        <div class="summary-item"><span class="summary-label">Alter</span><span class="summary-value" id="summaryAge">-</span></div>
+        <div class="summary-item"><span class="summary-label">Geschlecht</span><span class="summary-value" id="summaryGender">-</span></div>
+        <div class="summary-item"><span class="summary-label">Groesse</span><span class="summary-value" id="summaryHeight">-</span></div>
+        <div class="summary-item"><span class="summary-label">Gewicht</span><span class="summary-value" id="summaryWeight">-</span></div>
+        <div class="summary-item"><span class="summary-label">E-Mail</span><span class="summary-value" id="summaryEmail">-</span></div>
+      </div>
+    </div>
+
+    <div class="summary-card month-summary">
+      <div class="summary-card-header">
+        <span class="summary-card-title">Monatszusammenfassung</span>
+      </div>
+      <div class="month-stats-grid">
+        <div class="month-stat"><span class="month-stat-label">Gesamt</span><span class="month-stat-value" id="summaryTotal">0</span></div>
+        <div class="month-stat"><span class="month-stat-label">Tag / Ruhe</span><span class="month-stat-value" id="summaryDay">0</span></div>
+        <div class="month-stat"><span class="month-stat-label">Nacht</span><span class="month-stat-value" id="summaryNight">0</span></div>
+        <div class="month-stat"><span class="month-stat-label">Unknown</span><span class="month-stat-value" id="summaryUnknown">0</span></div>
+      </div>
+      <div class="summary-metrics">
+        <div class="metric-chip">Kalibrierung: <strong id="summaryCalibration">0</strong></div>
+        <div class="metric-chip">Manschette: <strong id="summaryCuff">0</strong></div>
+        <div class="metric-chip">Telefon: <strong id="summaryPhone">0</strong></div>
+      </div>
+    </div>
+
+    <div class="summary-card warning-summary">
+      <div class="summary-card-header">
+        <span class="summary-card-title">Parsing-Warnungen</span>
+      </div>
+      <ul class="warning-list" id="warningList">
+        <li>Keine Warnungen vorhanden.</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="dashboard-grid">
+    <div class="measurement-column">
+      <div class="column-header cuffless">
+        <div class="column-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="8" width="20" height="12" rx="3"/>
+            <path d="M8 8V6a4 4 0 0 1 8 0v2"/>
+            <line x1="12" y1="13" x2="12" y2="17"/>
+          </svg>
+          Manschettenloses Geraet
+        </div>
+        <div class="column-subtitle">Hilo / Kalibrierung mit Manschette</div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-value sys" id="last-sys-cuffless">--</div><div class="stat-label">SYS letzte</div></div>
+        <div class="stat-card"><div class="stat-value dia" id="last-dia-cuffless">--</div><div class="stat-label">DIA letzte</div></div>
+        <div class="stat-card"><div class="stat-value pulse" id="last-pulse-cuffless">--</div><div class="stat-label">Puls letzte</div></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-label">Verlauf (SYS / DIA / Puls)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-cuffless"></canvas>
+          <div class="chart-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Noch keine Daten
+          </div>
+        </div>
+      </div>
+
+      <div class="data-card">
+        <div class="data-card-header">
+          <span class="data-card-title">Messungen</span>
+          <span class="entry-count" id="count-cuffless">0 Eintraege</span>
+        </div>
+        <div class="data-list" id="list-cuffless">
+          <div class="empty-state">Noch keine Daten vorhanden.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="measurement-column">
+      <div class="column-header phone">
+        <div class="column-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="2" width="14" height="20" rx="2"/>
+            <circle cx="12" cy="17" r="1"/>
+          </svg>
+          Telefonmessung
+        </div>
+        <div class="column-subtitle">Messung via Telefon oder App</div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-value sys" id="last-sys-phone">--</div><div class="stat-label">SYS letzte</div></div>
+        <div class="stat-card"><div class="stat-value dia" id="last-dia-phone">--</div><div class="stat-label">DIA letzte</div></div>
+        <div class="stat-card"><div class="stat-value pulse" id="last-pulse-phone">--</div><div class="stat-label">Puls letzte</div></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-label">Verlauf (SYS / DIA / Puls)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-phone"></canvas>
+          <div class="chart-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Noch keine Daten
+          </div>
+        </div>
+      </div>
+
+      <div class="data-card">
+        <div class="data-card-header">
+          <span class="data-card-title">Messungen</span>
+          <span class="entry-count" id="count-phone">0 Eintraege</span>
+        </div>
+        <div class="data-list" id="list-phone">
+          <div class="empty-state">Noch keine Daten vorhanden.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="measurement-column">
+      <div class="column-header cuff">
+        <div class="column-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 12h.01M12 12h.01M15 12h.01"/>
+            <path d="M5 8a7 7 0 0 1 14 0v4a7 7 0 0 1-14 0V8z"/>
+            <path d="M12 19v3M9 22h6"/>
+          </svg>
+          Manschettenmessung
+        </div>
+        <div class="column-subtitle">Klassische Blutdruckmessung</div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-value sys" id="last-sys-cuff">--</div><div class="stat-label">SYS letzte</div></div>
+        <div class="stat-card"><div class="stat-value dia" id="last-dia-cuff">--</div><div class="stat-label">DIA letzte</div></div>
+        <div class="stat-card"><div class="stat-value pulse" id="last-pulse-cuff">--</div><div class="stat-label">Puls letzte</div></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-label">Verlauf (SYS / DIA / Puls)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-cuff"></canvas>
+          <div class="chart-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Noch keine Daten
+          </div>
+        </div>
+      </div>
+
+      <div class="data-card">
+        <div class="data-card-header">
+          <span class="data-card-title">Messungen</span>
+          <span class="entry-count" id="count-cuff">0 Eintraege</span>
+        </div>
+        <div class="data-list" id="list-cuff">
+          <div class="empty-state">Noch keine Daten vorhanden.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section class="analysis-section" id="analysisSection">
+    <div class="analysis-header">
+      <h2 class="analysis-title">Datenanalyse</h2>
+      <p class="analysis-subtitle">
+        Gesamtansicht aller Messungen (berichtsuebergreifend) und Methodenvergleich
+      </p>
+      <div class="analysis-meta" id="analysisMeta">
+        <span id="analysisDataSource">Datenquelle: -</span>
+        <span id="analysisClassifierNote"></span>
+      </div>
+    </div>
+
+    <div class="ml-panel" id="mlPanel">
+      <div class="ml-panel-row">
+        <div class="ml-panel-status">
+          <span class="ml-panel-label">Tag/Nacht-Modell</span>
+          <span class="ml-status-badge" id="mlStatusBadge" data-state="idle">Heuristik (kein Modell trainiert)</span>
+        </div>
+        <div class="ml-panel-actions">
+          <label class="ml-panel-check">
+            <input type="checkbox" id="mlUseCsv" checked />
+            <span>Roh-CSV nutzen</span>
+          </label>
+          <label class="ml-panel-check" title="Zusaetzlich Daten aus den importierten Berichten verwenden.">
+            <input type="checkbox" id="mlUseRepo" />
+            <span>Importierte Berichte einbeziehen</span>
+          </label>
+          <button type="button" class="btn btn-primary" id="mlTrainBtn">Modell trainieren</button>
+        </div>
+      </div>
+      <div class="ml-panel-info" id="mlPanelInfo">
+        Noch kein trainiertes Modell. Solange faellt das System auf die regelbasierte Tag/Nacht-Schaetzung zurueck.
+      </div>
+      <div class="ml-panel-sleep" id="mlSleepInfo" hidden></div>
+    </div>
+
+    <div class="analysis-tabs" role="tablist">
+      <button type="button" class="analysis-tab active" data-analysis-tab="unified" role="tab" aria-selected="true">Unified View</button>
+      <button type="button" class="analysis-tab" data-analysis-tab="bland-altman" role="tab" aria-selected="false">Bland-Altman Plot</button>
+    </div>
+
+    <div class="analysis-panel" id="panel-unified" role="tabpanel">
+      <div class="unified-controls">
+        <div class="control-group filter-group">
+          <span class="control-label">Parameter</span>
+          <div class="checkbox-row">
+            <label class="checkbox-chip">
+              <input type="checkbox" id="filter-sbp" checked />
+              <span class="checkbox-label sbp">SBP</span>
+            </label>
+            <label class="checkbox-chip">
+              <input type="checkbox" id="filter-dbp" checked />
+              <span class="checkbox-label dbp">DBP</span>
+            </label>
+            <label class="checkbox-chip">
+              <input type="checkbox" id="filter-hr" checked />
+              <span class="checkbox-label hr">HR</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="control-group zoom-group">
+          <span class="control-label">Zoom</span>
+          <div class="zoom-buttons">
+            <button type="button" class="btn btn-ghost" id="zoom-in" title="Vergroessern">+</button>
+            <button type="button" class="btn btn-ghost" id="zoom-out" title="Verkleinern">-</button>
+            <button type="button" class="btn btn-secondary" id="zoom-reset" title="Ansicht zuruecksetzen">Reset</button>
+          </div>
+        </div>
+
+        <div class="control-group zoom-slider-group">
+          <span class="control-label">Zoom-Level (1x - 10x)</span>
+          <input type="range" id="zoomSlider" min="1" max="10" step="0.1" value="1" />
+        </div>
+
+        <div class="control-group daynight-group">
+          <span class="control-label">Tag / Nacht</span>
+          <div class="segmented" id="daynightFilter" role="tablist">
+            <button type="button" data-daynight="all" class="active">Alle</button>
+            <button type="button" data-daynight="day">Tag / Ruhe</button>
+            <button type="button" data-daynight="night">Nacht</button>
+          </div>
+          <span class="daynight-hint" id="daynightHint" title="Die Klassifizierung ist eine Abschaetzung auf Basis von Uhrzeit und Messwerten. Quelle der Verteilung: Monatsbericht der Hilo-PDF.">Schaetzung - Details siehe Info</span>
+        </div>
+
+        <div class="control-group timewindow-group">
+          <span class="control-label">Zeitfenster</span>
+          <div class="timewindow-controls">
+            <input type="date" id="twStart" aria-label="Von Datum" />
+            <span class="tw-dash">-</span>
+            <input type="date" id="twEnd" aria-label="Bis Datum" />
+            <button type="button" class="btn btn-ghost" id="twClear" title="Zeitfenster zuruecksetzen">Alle Tage</button>
+          </div>
+          <div class="timewindow-presets">
+            <button type="button" class="btn btn-ghost" data-preset="1">1 Tag</button>
+            <button type="button" class="btn btn-ghost" data-preset="7">7 Tage</button>
+            <button type="button" class="btn btn-ghost" data-preset="14">14 Tage</button>
+            <button type="button" class="btn btn-ghost" data-preset="30">30 Tage</button>
+          </div>
+        </div>
+
+        <div class="zoom-status" id="zoomStatus">
+          <div class="zoom-status-item">
+            <span class="zoom-status-label">Level</span>
+            <span class="zoom-status-value" id="zoomLevel">1.00x</span>
+          </div>
+          <div class="zoom-status-item">
+            <span class="zoom-status-label">Zeitfenster</span>
+            <span class="zoom-status-value" id="zoomWindow">-</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="type-legend" id="typeLegend"></div>
+
+      <div class="chart-card unified-chart-card">
+        <div class="chart-label">Chronologischer Verlauf (alle Messarten)</div>
+        <div class="chart-wrap unified-chart-wrap">
+          <canvas id="unified-chart"></canvas>
+          <div class="chart-empty" id="unified-chart-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Keine importierten Messdaten. Bitte zuerst eine PDF importieren.
+          </div>
+        </div>
+        <div class="chart-hint">Mausrad zum Zoomen, Ziehen zum Verschieben im gezoomten Zustand.</div>
+      </div>
+
+      <div class="data-card unified-table-card">
+        <div class="data-card-header">
+          <span class="data-card-title">Chronologische Messwertliste</span>
+          <span class="entry-count" id="unifiedCount">0 Eintraege</span>
+        </div>
+        <div class="unified-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Messart</th>
+                <th>Datum</th>
+                <th>Uhrzeit</th>
+                <th>SBP</th>
+                <th>DBP</th>
+                <th>HR</th>
+              </tr>
+            </thead>
+            <tbody id="unifiedTableBody"></tbody>
+          </table>
+          <div class="table-empty" id="unifiedTableEmpty" style="display:none">Keine Messdaten vorhanden.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="analysis-panel" id="panel-bland-altman" role="tabpanel" style="display:none">
+      <div class="chart-card bland-chart-card">
+        <div class="chart-label">Bland-Altman Plot - Tagesmittelwert vs. Tagesvariabilitaet</div>
+        <div class="chart-wrap bland-chart-wrap">
+          <canvas id="bland-chart"></canvas>
+          <div class="chart-empty" id="bland-chart-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><line x1="4" y1="12" x2="20" y2="12"/></svg>
+            Keine ausreichenden Daten fuer Bland-Altman.
+          </div>
+        </div>
+        <div class="bland-legend-notes">
+          <span>Durchgezogen: mittlere Variabilitaet</span>
+          <span>Gepunktet: +/-1,96 x SD (Limits of Agreement)</span>
+          <span>Kreise: SBP, Dreiecke: DBP</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

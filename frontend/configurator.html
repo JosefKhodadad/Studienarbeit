@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Konfigurator - BlutdruckMonitor</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<nav>
+  <a href="index.html" class="nav-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="url(#grad2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <defs>
+        <linearGradient id="grad2" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#6366f1"/>
+          <stop offset="100%" stop-color="#10b981"/>
+        </linearGradient>
+      </defs>
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+    BlutdruckMonitor
+  </a>
+  <div class="nav-links">
+    <a href="index.html" class="nav-link">Dashboard</a>
+    <a href="configurator.html" class="nav-link active">Konfigurator</a>
+  </div>
+</nav>
+
+<main id="configurator-root">
+  <div class="page-header">
+    <h1 class="page-title">Konfigurator</h1>
+    <p class="page-subtitle">Messungen manuell eintragen und verwalten</p>
+  </div>
+
+  <div class="config-layout">
+    <div>
+      <div class="form-card">
+        <div class="form-card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="16"/>
+            <line x1="8" y1="12" x2="16" y2="12"/>
+          </svg>
+          Neue Messung eintragen
+        </div>
+
+        <form id="entryForm" autocomplete="off">
+          <div class="form-group">
+            <label for="type">Messgeraet / Methode</label>
+            <select id="type" required>
+              <option value="" disabled selected>- bitte waehlen -</option>
+              <option value="cuffless">Manschettenloses Geraet</option>
+              <option value="phone">Telefonmessung</option>
+              <option value="cuff">Manschettenmessung</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="datetime">Datum und Uhrzeit der Messung</label>
+            <input type="datetime-local" id="datetime" required />
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="sys">Systole (SYS)</label>
+              <input type="number" id="sys" placeholder="z. B. 120" min="60" max="260" required />
+              <span class="input-hint">mmHg - Bereich 60-260</span>
+            </div>
+            <div class="form-group">
+              <label for="dia">Diastole (DIA)</label>
+              <input type="number" id="dia" placeholder="z. B. 80" min="40" max="160" required />
+              <span class="input-hint">mmHg - Bereich 40-160</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="pulse">Puls</label>
+            <input type="number" id="pulse" placeholder="z. B. 72" min="30" max="250" required />
+            <span class="input-hint">bpm - Bereich 30-250</span>
+          </div>
+
+          <div class="form-group">
+            <label>Vorschau</label>
+            <div class="bp-preview" id="bp-preview">
+              <span style="color:var(--text-dim)">Werte eingeben...</span>
+            </div>
+          </div>
+
+          <div class="form-group save-target-group">
+            <label>Speicherziel</label>
+            <div class="save-target-options">
+              <label class="save-target-option">
+                <input type="radio" name="saveTarget" value="local" checked />
+                <span>
+                  <strong>Nur lokal</strong>
+                  <small>Bleibt im Browser (localStorage)</small>
+                </span>
+              </label>
+              <label class="save-target-option">
+                <input type="radio" name="saveTarget" value="server" />
+                <span>
+                  <strong>In aktuellen Bericht</strong>
+                  <small>Wird im Monatsbericht gespeichert und im Dashboard angezeigt</small>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            Messung speichern
+          </button>
+        </form>
+      </div>
+
+      <div class="reference-card">
+        <div class="reference-title">Blutdruck-Referenz (mmHg)</div>
+        <div class="reference-list">
+          <div class="reference-row"><span class="bp-cat optimal">Optimal</span><span>SYS &lt; 120 und DIA &lt; 80</span></div>
+          <div class="reference-row"><span class="bp-cat normal">Normal</span><span>SYS 120-129 und DIA 80-84</span></div>
+          <div class="reference-row"><span class="bp-cat elevated">Erhoeht</span><span>SYS 130-139 und DIA 85-89</span></div>
+          <div class="reference-row"><span class="bp-cat high">Hoch</span><span>SYS &gt;= 140 oder DIA &gt;= 90</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <section class="reports-manage-card" id="reportsManageCard" hidden>
+        <div class="reports-manage-header">
+          <h3 class="reports-manage-title">Importierte Berichte</h3>
+          <span class="reports-manage-hint">Ein kompletter Bericht wird inklusive aller Messungen entfernt.</span>
+        </div>
+        <div class="reports-manage-list" id="reportsManageList"></div>
+      </section>
+
+      <div class="table-card-header">
+        <h2 class="table-card-title">Alle Messungen</h2>
+        <div class="filter-tabs">
+          <button class="filter-tab active" data-filter="all" type="button">Alle</button>
+          <button class="filter-tab" data-filter="cuffless" type="button">Manschettenlos</button>
+          <button class="filter-tab" data-filter="phone" type="button">Telefon</button>
+          <button class="filter-tab" data-filter="cuff" type="button">Manschette</button>
+        </div>
+      </div>
+
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Methode</th>
+              <th>Blutdruck</th>
+              <th>Puls</th>
+              <th>Kategorie</th>
+              <th>Datum</th>
+              <th>Uhrzeit</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="allDataBody"></tbody>
+        </table>
+        <div class="table-empty" id="tableEmpty">
+          Noch keine Eintraege vorhanden. Tragen Sie oben Ihre erste Messung ein.
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="editDialog" class="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="editDialogTitle">
+  <div class="edit-dialog-card">
+    <div class="edit-dialog-header">
+      <h2 id="editDialogTitle">Messung bearbeiten</h2>
+      <div id="editStatusInfo" class="edit-status-info"></div>
+    </div>
+    <form id="editDialogForm" autocomplete="off">
+      <input type="hidden" id="editEntryId" />
+
+      <div class="form-group">
+        <label for="editType">Messart</label>
+        <select id="editType" required>
+          <option value="armband">Armband (manschettenlos)</option>
+          <option value="cuff_calibration">Kalibrierung mit Manschette</option>
+          <option value="phone_measurement">Telefonmessung</option>
+          <option value="cuff_measurement">Manschettenmessung</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="editDatetime">Datum und Uhrzeit</label>
+        <input type="datetime-local" id="editDatetime" required />
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="editSys">Systole (SYS)</label>
+          <input type="number" id="editSys" min="60" max="260" required />
+        </div>
+        <div class="form-group">
+          <label for="editDia">Diastole (DIA)</label>
+          <input type="number" id="editDia" min="40" max="160" required />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="editPulse">Puls</label>
+        <input type="number" id="editPulse" min="30" max="250" required />
+      </div>
+
+      <div class="edit-dialog-actions">
+        <button type="button" class="btn btn-ghost" id="editDialogCancel">Abbrechen</button>
+        <button type="submit" class="btn btn-primary">Speichern</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
