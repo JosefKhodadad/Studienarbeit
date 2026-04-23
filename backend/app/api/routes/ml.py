@@ -137,6 +137,8 @@ def _aggregate_reference(summaries: list[dict]) -> NightDayReference | None:
         night_hr_mean=night_hr,
         night_sbp_min=_mean("night", "min"),
         night_sbp_max=_mean("night", "max"),
+        night_dbp_min=_mean("night", "min_diastolic"),
+        night_hr_min=_mean("night", "min_heart_rate"),
         day_sbp_mean=_mean("day_rest", "mean"),
         day_dbp_mean=_mean("day_rest", "mean_diastolic"),
         day_hr_mean=_mean("day_rest", "mean_heart_rate"),

@@ -56,20 +56,22 @@ FEATURE_NAMES: tuple[str, ...] = (
     "hr_local_trend",
     "minutes_since_last",
     "age_norm",
-    "night_ref_match",
-    "day_ref_match",
-    "night_ref_outlier",
+    "night_ref_match",      # Nähe zum Nacht-Mittel (einseitig nach oben)
+    "night_min_match",      # Nähe zum Nacht-Minimum (Tiefschlaf-Indikator)
+    "day_ref_match",        # Nähe zum Tag/Ruhe-Mittel (symmetrisch)
+    "night_ref_outlier",    # 1 = deutlich über Nacht-Mittel (Aufwach-Kandidat)
 )
 
 # Indizes der Features, die NICHT pro Feature standardisiert werden, weil sie
 # bereits in einem festen Wertebereich liegen ([0,1] oder normiert).
 _NO_STANDARDIZE_INDICES: frozenset[int] = frozenset(
-    {0, 1, 2, 3, 4, 5, 6, 16, 17, 18, 19}
+    {0, 1, 2, 3, 4, 5, 6, 16, 17, 18, 19, 20}
 )
 
-# 3 % Toleranz auf den Nacht-Mittelwert — Vorgabe des Aufgabenblattes
-# ("Lege auf den durchschnittlichen Nacht-Blutdruck eine Toleranz von 3 %").
-NIGHT_REFERENCE_TOLERANCE = 0.03
+# 2,5 % Toleranz auf den Nacht-Mittelwert, einseitig nach oben: ein Messwert
+# leicht *unter* dem Nachtmittel ist nachts völlig plausibel (Dipping), nur
+# oberhalb der Grenze wird es zum Aufwach-Kandidaten.
+NIGHT_REFERENCE_TOLERANCE = 0.025
 
 # Außerhalb von ``OUTLIER_TOLERANCE_FACTOR × Toleranz`` markieren wir die
 # Messung als "klar außerhalb" — diese Hilfsgröße wird zusätzlich an den
@@ -103,6 +105,8 @@ class NightDayReference:
     night_dbp_mean: float | None = None
     night_hr_mean: float | None = None
     night_sbp_min: float | None = None
+    night_dbp_min: float | None = None
+    night_hr_min: float | None = None
     night_sbp_max: float | None = None
     day_sbp_mean: float | None = None
     day_dbp_mean: float | None = None
@@ -120,6 +124,11 @@ class NightDayReference:
             value is not None and value > 0
             for value in (self.day_sbp_mean, self.day_dbp_mean, self.day_hr_mean)
         )
+
+    def has_night_mins(self) -> bool:
+        # SBP-Min reicht als Basis; DBP/HR-Min werden in ``_night_min_match``
+        # weggelassen, wenn sie fehlen.
+        return self.night_sbp_min is not None and self.night_sbp_min > 0
 
 
 @dataclass(frozen=True)
@@ -172,6 +181,7 @@ def build_features(
     ref = reference or NightDayReference()
     has_night_ref = ref.has_night_means()
     has_day_ref = ref.has_day_means()
+    has_night_min = ref.has_night_mins()
 
     sorted_indices = _sorted_index_by_time(measurements)
     timestamps_sorted = [_parse_dt(measurements[i]["datetime"]) for i in sorted_indices]
@@ -237,6 +247,7 @@ def build_features(
         # und mappen sie auf einen Match-Score in [0,1]. Score 1 = innerhalb
         # der Toleranz, fällt mit wachsender Abweichung exponentiell ab.
         night_match = 0.0
+        night_min_score = 0.0
         day_match = 0.0
         outlier_flag = 0.0
         if has_night_ref:
@@ -246,7 +257,10 @@ def build_features(
                 ref.night_dbp_mean or 0.0,
                 ref.night_hr_mean or 0.0,
                 ref.tolerance_fraction,
+                upward_only=True,
             )
+        if has_night_min:
+            night_min_score = _night_min_match(sbp, dbp, hr, ref)
         if has_day_ref:
             day_match, _ = _reference_match(
                 sbp, dbp, hr,
@@ -254,6 +268,7 @@ def build_features(
                 ref.day_dbp_mean or 0.0,
                 ref.day_hr_mean or 0.0,
                 ref.tolerance_fraction,
+                upward_only=False,
             )
 
         matrix[original_pos] = (
@@ -264,7 +279,7 @@ def build_features(
             sbp_trend_sorted[sorted_pos], hr_trend_sorted[sorted_pos],
             minutes_since_sorted[sorted_pos],
             age_norm,
-            night_match, day_match, outlier_flag,
+            night_match, night_min_score, day_match, outlier_flag,
         )
 
         # Schwaches Label: Standard-Regel (22..06) ist die Basis. Telefonmessungen
@@ -466,33 +481,74 @@ def _reference_match(
     ref_dbp: float,
     ref_hr: float,
     tolerance_fraction: float,
+    *,
+    upward_only: bool = True,
 ) -> tuple[float, float]:
     """Bewerte Nähe zu einer Referenz (Nacht- oder Tag-Mittelwerte).
 
-    Rückgabe: ``(match_score, outlier_flag)``.
+    ``upward_only=True`` (Default): nur Überschreitung zählt. Werte *unter*
+    dem Nachtmittel sind nachts erwünscht (Dipping) und dürfen den Score
+    nicht drücken. Für Tag-Ruhe rufen wir mit ``upward_only=False`` auf.
 
-    * ``match_score`` ∈ [0, 1] — 1, wenn alle drei Vitalwerte innerhalb der
-      Toleranz liegen, fällt mit wachsender Abweichung exponentiell ab.
-    * ``outlier_flag`` — 1.0, sobald mindestens ein Vital weiter als
-      ``OUTLIER_TOLERANCE_FACTOR × Toleranz`` vom Referenzwert entfernt ist;
-      sonst 0.0. Diese Größe wandert unverändert in das Modell-Feature
-      ``night_ref_outlier`` und in den Sleep-Phase-Detektor.
+    Rückgabe: ``(match_score, outlier_flag)``. Outlier wird ebenfalls nur
+    ausgelöst, wenn der Wert oberhalb der Toleranz liegt — das ist der
+    Aufwach-Kandidat.
     """
 
-    def _rel_distance(value: float, ref: float) -> float:
+    def _rel_over(value: float, ref: float) -> float:
         if ref <= 0.0:
             return 0.0
-        return abs(value - ref) / ref
+        diff = value - ref if upward_only else abs(value - ref)
+        return max(0.0, diff) / ref
 
     distances = (
-        _rel_distance(sbp, ref_sbp),
-        _rel_distance(dbp, ref_dbp),
-        _rel_distance(hr, ref_hr),
+        _rel_over(sbp, ref_sbp),
+        _rel_over(dbp, ref_dbp),
+        _rel_over(hr, ref_hr),
     )
 
     tol = max(1e-6, float(tolerance_fraction))
-    # Excess: wieviel Vielfache der Toleranz reißt der schlechteste Wert.
     excess = max(d / tol for d in distances)
     match_score = float(math.exp(-max(0.0, excess - 1.0)))
     outlier_flag = 1.0 if excess >= OUTLIER_TOLERANCE_FACTOR else 0.0
     return match_score, outlier_flag
+
+
+def _night_min_match(
+    sbp: float,
+    dbp: float,
+    hr: float,
+    ref: NightDayReference,
+) -> float:
+    """Näheschatzung zu den Nacht-Minima (Tiefschlaf-Indikator).
+
+    Ein Messwert nahe oder unter dem patientenspezifischen Nacht-Minimum ist
+    ein starkes Schlaf-Signal. Wir gewichten SBP am höchsten (stabilstes PDF-
+    Signal), gefolgt von DBP und HR. Fehlende Min-Werte werden übersprungen.
+    """
+
+    tol = max(1e-6, float(ref.tolerance_fraction))
+
+    def _closeness(value: float, ref_min: float | None) -> float | None:
+        if ref_min is None or ref_min <= 0.0:
+            return None
+        band = ref_min * tol
+        upper = ref_min + 2.0 * band  # "Tiefschlaf"-Band: bis ~2x Toleranz über Min
+        if value <= upper:
+            return 1.0
+        return float(math.exp(-(value - upper) / max(band, 1e-6)))
+
+    parts: list[tuple[float, float]] = []
+    sbp_close = _closeness(sbp, ref.night_sbp_min)
+    if sbp_close is not None:
+        parts.append((sbp_close, 0.5))
+    dbp_close = _closeness(dbp, ref.night_dbp_min)
+    if dbp_close is not None:
+        parts.append((dbp_close, 0.3))
+    hr_close = _closeness(hr, ref.night_hr_min)
+    if hr_close is not None:
+        parts.append((hr_close, 0.2))
+    if not parts:
+        return 0.0
+    total_weight = sum(w for _, w in parts)
+    return float(sum(v * w for v, w in parts) / total_weight)

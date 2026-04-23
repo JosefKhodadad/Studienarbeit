@@ -434,6 +434,8 @@ def _build_reference_from_summary(summary: dict | None) -> NightDayReference | N
         night_hr_mean=night_hr,
         night_sbp_min=_f(night.get("min")),
         night_sbp_max=_f(night.get("max")),
+        night_dbp_min=_f(night.get("min_diastolic")),
+        night_hr_min=_f(night.get("min_heart_rate")),
         day_sbp_mean=_f(day.get("mean")),
         day_dbp_mean=_f(day.get("mean_diastolic")),
         day_hr_mean=_f(day.get("mean_heart_rate")),
