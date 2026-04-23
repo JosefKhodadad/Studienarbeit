@@ -51,3 +51,33 @@ def test_extract_measurement_rows() -> None:
     assert len(rows) == 2
     assert rows[0].systolic == 123
     assert rows[1].diastolic == 75
+
+
+def test_extract_summary_tabular_measurements_with_triplets() -> None:
+    text = """
+    Übersichtstabelle
+    Mittelwert
+    129
+    74
+    68
+    117
+    64
+    58
+    127
+    73
+    66
+    Messungen
+    438
+    438
+    438
+    92
+    92
+    92
+    530
+    530
+    530
+    """
+    summary = extract_summary(text)
+    assert summary["day_rest"]["measurements"] == 438
+    assert summary["night"]["measurements"] == 92
+    assert summary["all_measurements"]["measurements"] == 530
