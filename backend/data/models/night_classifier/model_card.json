@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-04-22T15:01:35Z",
-  "sample_count": 2280,
-  "positive_count": 725,
+  "created_at": "2026-04-22T18:47:51Z",
+  "sample_count": 4033,
+  "positive_count": 233,
   "feature_names": [
     "sin_hour",
     "cos_hour",
@@ -19,7 +19,10 @@
     "sbp_local_trend",
     "hr_local_trend",
     "minutes_since_last",
-    "age_norm"
+    "age_norm",
+    "night_ref_match",
+    "day_ref_match",
+    "night_ref_outlier"
   ],
   "training_config": {
     "epochs": 120,
@@ -36,10 +39,10 @@
     "seed": 1337
   },
   "history_summary": {
-    "epochs_run": 120,
-    "final_loss": 0.02189445309340954,
-    "final_val_loss": 0.020814871415495872,
-    "best_val_loss": 0.019813794642686844
+    "epochs_run": 81,
+    "final_loss": 0.019990751519799232,
+    "final_val_loss": 0.013682221062481403,
+    "best_val_loss": 0.013414871878921986
   },
-  "notes": "repo:2280 Messungen"
+  "notes": "hilo_rohdaten_April.csv; hilo_rohdaten_märz.csv; repo:2280 Messungen aus 3 Berichten"
 }
