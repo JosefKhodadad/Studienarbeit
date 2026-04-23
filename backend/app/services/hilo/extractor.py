@@ -205,14 +205,18 @@ def _extract_tabular_summary(page_text: str) -> dict[str, dict[str, float | int 
     # ``Messungen`` is intentionally *only* SBP-style (one count per column),
     # so we keep it on the legacy single-value path further below.
     row_labels = [
-        ("Mittelwert", "mean", "mean_diastolic", "mean_heart_rate", float),
-        ("SD", "sd", None, None, float),
-        ("Max", "max", "max_diastolic", "max_heart_rate", float),
-        ("Mindest", "min", "min_diastolic", "min_heart_rate", float),
+        (("Mittelwert",), "mean", "mean_diastolic", "mean_heart_rate", float),
+        (("SD",), "sd", None, None, float),
+        (("Max",), "max", "max_diastolic", "max_heart_rate", float),
+        (("Mindest", "Minimalwert", "Min"), "min", "min_diastolic", "min_heart_rate", float),
     ]
 
-    for label, key_sbp, key_dbp, key_hr, caster in row_labels:
-        numbers = _numbers_after_label(page_text, label, count=9)
+    for labels, key_sbp, key_dbp, key_hr, caster in row_labels:
+        numbers = None
+        for label in labels:
+            numbers = _numbers_after_label(page_text, label, count=9)
+            if numbers:
+                break
         if not numbers:
             continue
         try:
