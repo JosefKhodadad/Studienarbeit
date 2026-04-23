@@ -81,3 +81,65 @@ def test_extract_summary_tabular_measurements_with_triplets() -> None:
     assert summary["day_rest"]["measurements"] == 438
     assert summary["night"]["measurements"] == 92
     assert summary["all_measurements"]["measurements"] == 530
+
+
+def test_extract_summary_tabular_includes_sys_dia_min_max_mean() -> None:
+    text = """
+    Übersichtstabelle
+    Mittelwert
+    129
+    74
+    68
+    117
+    64
+    58
+    127
+    73
+    66
+    Max
+    143
+    86
+    97
+    136
+    77
+    78
+    143
+    86
+    97
+    Mindest
+    106
+    56
+    46
+    103
+    54
+    48
+    103
+    54
+    46
+    """
+    summary = extract_summary(text)
+    assert summary["day_rest"]["mean"] == 129.0
+    assert summary["day_rest"]["mean_diastolic"] == 74.0
+    assert summary["night"]["max"] == 136.0
+    assert summary["night"]["max_diastolic"] == 77.0
+    assert summary["all_measurements"]["min"] == 103.0
+    assert summary["all_measurements"]["min_diastolic"] == 54.0
+
+
+def test_extract_summary_tabular_accepts_minimalwert_label() -> None:
+    text = """
+    Übersichtstabelle
+    Minimalwert
+    106
+    56
+    46
+    103
+    54
+    48
+    103
+    54
+    46
+    """
+    summary = extract_summary(text)
+    assert summary["day_rest"]["min"] == 106.0
+    assert summary["night"]["min_diastolic"] == 54.0

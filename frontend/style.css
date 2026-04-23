@@ -182,6 +182,40 @@ main { padding: 2rem; max-width: 1600px; margin: 0 auto; }
 .bp-average-line { font-size: 0.9rem; color: var(--text-muted); }
 .bp-average-line strong { color: var(--text); font-weight: 700; }
 .bp-average-source { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-dim); font-style: italic; }
+.overview-stats {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+}
+.overview-stats-header {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 0.45rem;
+}
+.overview-stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.overview-stats-table th,
+.overview-stats-table td {
+  padding: 0.35rem 0.45rem;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  text-align: left;
+}
+.overview-stats-table th {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.overview-stats-table td {
+  color: var(--text-muted);
+}
+.overview-stats-table td:first-child {
+  color: var(--text);
+  font-weight: 600;
+}
 
 .warning-list {
   list-style: disc;

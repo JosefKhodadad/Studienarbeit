@@ -59,6 +59,8 @@ let _currentFilter = 'all';
 let _lastServerPayload = null;
 let _unifiedPayload = null;
 let _reportsList = { reports: [], current_report_id: null };
+let _serverMeasurementsCache = { sourceRef: null, value: [] };
+let _filteredMeasurementsCache = { key: null, value: [] };
 let _mlState = {
   status: 'idle',
   started_at: null,
@@ -539,6 +541,25 @@ function renderBpAverages(currentSummary) {
     ? `Quelle: ${reportCount} importierte Berichte (gewichtet nach Messanzahl)`
     : 'Quelle: aktueller Bericht';
   setText('avgScopeLabel', scopeLabel);
+  renderOverviewTable(summary);
+}
+
+function renderOverviewTable(summary) {
+  const day = summary?.day_rest || {};
+  const night = summary?.night || {};
+  const all = summary?.all_measurements || {};
+
+  setText('overviewMeanDay', formatBpPair(day.mean, day.mean_diastolic));
+  setText('overviewMeanNight', formatBpPair(night.mean, night.mean_diastolic));
+  setText('overviewMeanAll', formatBpPair(all.mean, all.mean_diastolic));
+
+  setText('overviewMaxDay', formatBpPair(day.max, day.max_diastolic));
+  setText('overviewMaxNight', formatBpPair(night.max, night.max_diastolic));
+  setText('overviewMaxAll', formatBpPair(all.max, all.max_diastolic));
+
+  setText('overviewMinDay', formatBpPair(day.min, day.min_diastolic));
+  setText('overviewMinNight', formatBpPair(night.min, night.min_diastolic));
+  setText('overviewMinAll', formatBpPair(all.min, all.min_diastolic));
 }
 
 function formatBpPair(sys, dia) {
@@ -663,10 +684,17 @@ function getServerMeasurements() {
     source = _lastServerPayload.measurements;
   }
 
-  return source
+  if (_serverMeasurementsCache.sourceRef === source) {
+    return _serverMeasurementsCache.value;
+  }
+
+  const sorted = source
     .filter((m) => m && m.datetime && Number.isFinite(new Date(m.datetime).getTime()))
     .slice()
     .sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+
+  _serverMeasurementsCache = { sourceRef: source, value: sorted };
+  return sorted;
 }
 
 function parseIsoDateOnly(isoDate) {
@@ -700,7 +728,22 @@ function applyAnalysisFilters(measurements) {
 }
 
 function getFilteredMeasurements() {
-  return applyAnalysisFilters(getServerMeasurements());
+  const source = getServerMeasurements();
+  const filters = _analysisState.filters;
+  const key = [
+    source.length,
+    _analysisState.dayNight,
+    _analysisState.timeWindow.start || '',
+    _analysisState.timeWindow.end || '',
+    filters.sbp ? 1 : 0,
+    filters.dbp ? 1 : 0,
+    filters.hr ? 1 : 0,
+  ].join('|');
+
+  if (_filteredMeasurementsCache.key === key) return _filteredMeasurementsCache.value;
+  const filtered = applyAnalysisFilters(source);
+  _filteredMeasurementsCache = { key, value: filtered };
+  return filtered;
 }
 
 function typeMeta(type) {
@@ -829,6 +872,8 @@ function buildUnifiedDatasets(measurements) {
     datasets.push({
       label: paramMeta.label,
       data: points,
+      parsing: false,
+      normalized: true,
       borderColor: paramMeta.lineColor,
       backgroundColor: `${paramMeta.lineColor}18`,
       borderDash: paramMeta.dash,
@@ -981,6 +1026,7 @@ function renderUnifiedChart(measurements) {
     data: { datasets },
     plugins: [SLEEP_BANDS_PLUGIN],
     options: {
+      animation: false,
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'nearest', intersect: false },
@@ -1604,8 +1650,12 @@ async function fetchReportsList() {
 async function fetchUnifiedMeasurements() {
   try {
     _unifiedPayload = await apiRequest('/api/dashboard/unified-measurements');
+    _serverMeasurementsCache = { sourceRef: null, value: [] };
+    _filteredMeasurementsCache = { key: null, value: [] };
   } catch {
     _unifiedPayload = null;
+    _serverMeasurementsCache = { sourceRef: null, value: [] };
+    _filteredMeasurementsCache = { key: null, value: [] };
   }
   return _unifiedPayload;
 }
