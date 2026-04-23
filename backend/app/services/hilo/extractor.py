@@ -239,14 +239,16 @@ def _extract_tabular_summary(page_text: str) -> dict[str, dict[str, float | int 
             result["night"][key_hr] = night_hr
             result["all_measurements"][key_hr] = all_hr
 
-    # ``Messungen`` is a row of three integers (one per column); we still need
-    # to populate it so the rest of the pipeline knows the per-class counts.
-    counts = _numbers_after_label(page_text, "Messungen", count=3)
+    # ``Messungen`` can appear either as 3 values (per column) or as 9 values
+    # (Sys/Dia/HR triplets per column). We only need one count per section and
+    # therefore map [day, night, all] from either representation.
+    counts = _numbers_after_label(page_text, "Messungen", count=9) or _numbers_after_label(page_text, "Messungen", count=3)
     if counts:
         try:
-            result["day_rest"]["measurements"] = int(float(counts[0].replace(",", ".")))
-            result["night"]["measurements"] = int(float(counts[1].replace(",", ".")))
-            result["all_measurements"]["measurements"] = int(float(counts[2].replace(",", ".")))
+            day_idx, night_idx, all_idx = (0, 3, 6) if len(counts) >= 9 else (0, 1, 2)
+            result["day_rest"]["measurements"] = int(float(counts[day_idx].replace(",", ".")))
+            result["night"]["measurements"] = int(float(counts[night_idx].replace(",", ".")))
+            result["all_measurements"]["measurements"] = int(float(counts[all_idx].replace(",", ".")))
         except (ValueError, IndexError):
             pass
 
