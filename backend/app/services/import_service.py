@@ -27,10 +27,12 @@ from app.services.classification_service import NightDayClassifier
 from app.services.ml.feature_engineering import NightDayReference
 from app.services.ml.sleep_phase import (
     MIN_NAP_DURATION_MINUTES,
+    NIGHT_MIN_EPISODE_MINUTES,
     SleepEpisode,
     apply_nap_recurrence_gate,
     detect_sleep_episodes,
     expected_sleep_range,
+    filter_short_night_episodes,
 )
 from app.services.parser_service import HiloParserService
 from app.services.repository import InMemoryImportRepository
@@ -219,31 +221,50 @@ class ImportService:
                 for ep in episodes:
                     pending_episodes.append((ep, report_id, list(local_to_global)))
 
-        # Nap-Gate über alle Reports hinweg: Zu kurze Mittagsepisoden oder
-        # einzelne Zufallstreffer werden verworfen. Für rejected Nap-Episoden
-        # setzen wir das ``is_night``-Flag der zugehörigen Messungen zurück,
-        # damit Anzeige und Klassifikation kohärent bleiben.
+        # Gate 1: Nap-Recurrence — Mittagsepisoden ohne wiederkehrendes Muster
+        # oder unter 45 min werden verworfen.
         all_episodes: list[SleepEpisode] = [ep for ep, _rid, _map in pending_episodes]
-        decision = apply_nap_recurrence_gate(
+        nap_decision = apply_nap_recurrence_gate(
             all_episodes,
             observation_day_count=len(observation_days),
         )
-        rejected_ids = {id(ep) for ep in decision.rejected_episodes}
+        nap_rejected_ids = {id(ep) for ep in nap_decision.rejected_episodes}
+
+        # Gate 2: Mindestdauer für Nacht-/Other-Episoden — filtert Fragmente
+        # (z. B. 15-Minuten-Banner durch einzelne abweichende Messungen) weg.
+        short_decision = filter_short_night_episodes(
+            all_episodes,
+            min_duration_minutes=NIGHT_MIN_EPISODE_MINUTES,
+        )
+        short_rejected_ids = {id(ep) for ep in short_decision.rejected_episodes}
+
+        def _flag_reason(existing: str, tag: str) -> str:
+            if not existing:
+                return tag
+            if tag in existing:
+                return existing
+            return f"{existing}+{tag}"
 
         sleep_episodes: list[dict] = []
         for ep, report_id, idx_map in pending_episodes:
-            if id(ep) in rejected_ids:
-                # Zurücknehmen: für jede Messung der verworfenen Nap-Episode
-                # das Nacht-Flag aufheben und die Methode markieren.
+            tags: list[str] = []
+            if id(ep) in nap_rejected_ids:
+                tags.append("nap_gate_reverted")
+            if id(ep) in short_rejected_ids:
+                tags.append("short_episode_reverted")
+            if tags:
+                # Für verworfene Episoden das Nacht-Flag der zugehörigen
+                # Messungen aufheben, damit Anzeige und Klassifikation
+                # konsistent sind (kein sichtbarer Balken, aber auch nicht
+                # mehr "is_night=true" in der Messungs-Tabelle).
                 for local_idx in ep.measurement_indices:
                     if 0 <= local_idx < len(idx_map):
                         global_idx = idx_map[local_idx]
                         measurements[global_idx]["is_night"] = False
                         existing_method = measurements[global_idx].get("classification_method") or ""
-                        if "nap_gate_reverted" not in existing_method:
-                            measurements[global_idx]["classification_method"] = (
-                                f"{existing_method}+nap_gate_reverted" if existing_method else "nap_gate_reverted"
-                            )
+                        for tag in tags:
+                            existing_method = _flag_reason(existing_method, tag)
+                        measurements[global_idx]["classification_method"] = existing_method
                 continue
             payload_ep = ep.to_dict()
             payload_ep["report_id"] = report_id
@@ -258,11 +279,11 @@ class ImportService:
         expected_range = expected_sleep_range(latest_age) if measurements else None
 
         nap_info = {
-            "recurrent_pattern_detected": decision.recurrent_pattern_detected,
-            "unique_nap_days": decision.unique_nap_days,
-            "observation_day_count": decision.observation_day_count,
+            "recurrent_pattern_detected": nap_decision.recurrent_pattern_detected,
+            "unique_nap_days": nap_decision.unique_nap_days,
+            "observation_day_count": nap_decision.observation_day_count,
             "min_duration_minutes": float(MIN_NAP_DURATION_MINUTES),
-            "rejected_candidate_count": len(decision.rejected_episodes),
+            "rejected_candidate_count": len(nap_decision.rejected_episodes),
         }
 
         return UnifiedMeasurementsResponse.model_validate(

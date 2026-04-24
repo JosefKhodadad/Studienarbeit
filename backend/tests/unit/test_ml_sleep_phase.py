@@ -9,10 +9,13 @@ from app.services.ml.sleep_phase import (
     EPISODE_TYPE_NAP,
     EPISODE_TYPE_NIGHT,
     MIN_NAP_DURATION_MINUTES,
+    NIGHT_MERGE_GAP_MINUTES,
+    NIGHT_MIN_EPISODE_MINUTES,
     apply_nap_recurrence_gate,
     classify_episode_type,
     detect_sleep_episodes,
     expected_sleep_range,
+    filter_short_night_episodes,
 )
 
 
@@ -196,3 +199,108 @@ def test_nap_gate_uses_fraction_for_small_observation_windows() -> None:
 def test_min_nap_duration_matches_requirement() -> None:
     # Regressions-Check: Die Vorgabe "mindestens 45 min" steht fest im Code.
     assert MIN_NAP_DURATION_MINUTES == 45.0
+
+
+def test_detect_sleep_episodes_merges_close_night_fragments() -> None:
+    # Zwei Nacht-Blöcke mit einer 30-min-Unterbrechung (Tag-Messung) in der
+    # Mitte. Mit Merging (Default 60 min) soll nur EINE Episode entstehen.
+    base = datetime(2026, 4, 1, 22, 0)
+    timestamps = [
+        base,                           # 22:00 Nacht
+        base + timedelta(minutes=30),   # 22:30 Nacht
+        base + timedelta(minutes=60),   # 23:00 Tag (Ausreißer)
+        base + timedelta(minutes=90),   # 23:30 Nacht (neuer Block ohne Merge)
+        base + timedelta(minutes=120),  # 00:00 Nacht
+    ]
+    flags = np.array([True, True, False, True, True])
+    episodes = detect_sleep_episodes(timestamps, flags, age_years=40)
+
+    assert len(episodes) == 1
+    ep = episodes[0]
+    assert ep.start == timestamps[0]
+    assert ep.end == timestamps[-1]
+    # Beide ursprünglichen Teilblöcke sind in der gemergten Episode enthalten.
+    assert ep.measurement_indices == [0, 1, 3, 4]
+
+
+def test_detect_sleep_episodes_does_not_merge_far_apart_episodes() -> None:
+    # Drei Stunden Tag-Phase zwischen zwei Nacht-Blöcken — zu groß für Merge.
+    base = datetime(2026, 4, 1, 22, 0)
+    timestamps = [
+        base,
+        base + timedelta(minutes=30),
+        base + timedelta(hours=3, minutes=30),  # Tag
+        base + timedelta(hours=4),
+        base + timedelta(hours=4, minutes=30),
+    ]
+    flags = np.array([True, True, False, True, True])
+    episodes = detect_sleep_episodes(timestamps, flags, age_years=40)
+
+    assert len(episodes) == 2
+
+
+def test_detect_sleep_episodes_respects_custom_merge_gap() -> None:
+    # Bei ``merge_gap_minutes=0`` greift das Merging nicht mehr — wir bekommen
+    # beide Fragmente getrennt zu sehen.
+    base = datetime(2026, 4, 1, 22, 0)
+    timestamps = [
+        base,
+        base + timedelta(minutes=30),
+        base + timedelta(minutes=60),   # Tag-Lücke
+        base + timedelta(minutes=90),
+    ]
+    flags = np.array([True, True, False, True])
+    episodes = detect_sleep_episodes(
+        timestamps, flags, age_years=40, merge_gap_minutes=0
+    )
+    assert len(episodes) == 2
+
+
+def test_filter_short_night_episodes_drops_fragments() -> None:
+    # Erzeuge eine kurze Nacht-Episode (15 min) und eine lange (5 h).
+    base = datetime(2026, 4, 1, 22, 0)
+    short_flags = np.array([True, True])
+    short_timestamps = [base, base + timedelta(minutes=15)]
+    short_eps = detect_sleep_episodes(short_timestamps, short_flags)
+    assert len(short_eps) == 1
+
+    long_flags = np.array([True] * 11)
+    long_timestamps = [base + timedelta(minutes=30 * i) for i in range(11)]
+    long_eps = detect_sleep_episodes(long_timestamps, long_flags)
+    assert len(long_eps) == 1
+
+    result = filter_short_night_episodes(
+        short_eps + long_eps, min_duration_minutes=NIGHT_MIN_EPISODE_MINUTES
+    )
+    assert len(result.accepted_episodes) == 1
+    assert result.accepted_episodes[0].duration_minutes >= NIGHT_MIN_EPISODE_MINUTES
+    assert len(result.rejected_episodes) == 1
+
+
+def test_filter_short_night_episodes_leaves_naps_untouched() -> None:
+    # Ein kurzer Nap (30 min) — der darf nicht vom Night-Filter weggekickt
+    # werden, weil das nap_gate dafür zuständig ist.
+    from app.services.ml.sleep_phase import SleepEpisode
+
+    start = datetime(2026, 4, 1, 13, 0)
+    end = start + timedelta(minutes=30)
+    short_nap = SleepEpisode(
+        start=start,
+        end=end,
+        sleep_onset_estimate=start,
+        wake_estimate=end,
+        measurement_indices=[0, 1],
+        confidence=0.5,
+        arousal_events=[],
+        episode_type=EPISODE_TYPE_NAP,
+    )
+
+    result = filter_short_night_episodes([short_nap], min_duration_minutes=60.0)
+    assert short_nap in result.accepted_episodes
+    assert result.rejected_episodes == []
+
+
+def test_hyperparameter_defaults_match_expectations() -> None:
+    # Regressions-Check für die Defaults, damit nicht unbemerkt verstellt wird.
+    assert NIGHT_MERGE_GAP_MINUTES == 60.0
+    assert NIGHT_MIN_EPISODE_MINUTES == 30.0

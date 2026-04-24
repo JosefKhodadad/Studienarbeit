@@ -40,6 +40,36 @@ _SLEEP_HOURS_BY_AGE = (
 _DEFAULT_SLEEP_RANGE = (7.0, 9.0)
 _DEFAULT_ONSET_LATENCY_MIN = 15  # Minuten Sleep Onset Latency
 
+# --- Hyperparameter der Episoden-Aggregation -----------------------------
+#
+# Diese Konstanten sind die zentralen Stellschrauben für das Verhalten des
+# Sleep-Phase-Detektors. Sie werden von ``detect_sleep_episodes`` als
+# Default-Parameter verwendet und können pro Aufruf überschrieben werden.
+
+# Maximale Lücke zwischen zwei aufeinanderfolgenden Nacht-Messungen, bevor
+# eine neue Episode begonnen wird. Größer = robuster gegen fehlende
+# Stichproben, aber vermischt ggf. entfernte Schlafphasen.
+NIGHT_GAP_TOLERANCE_MINUTES = 120.0
+
+# Zwei benachbarte Nacht-Episoden werden zu einer zusammengezogen, wenn die
+# Lücke zwischen ihrem Ende und dem Start der nächsten kürzer als dieser
+# Wert ist. Dient dazu, 15–60-Minuten-Fragmente (einzelne Mess-Ausreißer
+# mitten in der Nacht) nicht als getrennte Schlafphasen anzuzeigen.
+# Setze den Wert auf 0, um das Merging zu deaktivieren.
+NIGHT_MERGE_GAP_MINUTES = 60.0
+
+# Mindestdauer einer echten Nacht-Episode in Minuten. Kürzere Episoden
+# gelten als Fragmente und werden vom Post-Filter verworfen bzw. im Unified-
+# View nicht mehr als Schlafbanner dargestellt. Setze den Wert auf 0, um den
+# Filter zu deaktivieren.
+NIGHT_MIN_EPISODE_MINUTES = 30.0
+
+# Anzahl aufeinanderfolgender Outlier-Messungen, die als Aufwach-Phase
+# (Arousal) innerhalb einer Schlafepisode gewertet werden. 2 ist der in der
+# Aufgabenstellung geforderte Mindestwert; 3 macht das System gegenüber
+# einzelnen Rauschmessungen robuster.
+ARROUSAL_MIN_RUN = 2
+
 
 # Episodentypen: werden vom Unified-View genutzt, um Nacht- und Mittagsschlaf
 # gezielt unterschiedlich zu behandeln (z. B. Darstellung, Gate für Naps).
@@ -140,21 +170,28 @@ def detect_sleep_episodes(
     age_years: float | None = None,
     onset_latency_minutes: int = _DEFAULT_ONSET_LATENCY_MIN,
     night_ref_outlier: np.ndarray | None = None,
-    min_arousal_run: int = 2,
+    min_arousal_run: int = ARROUSAL_MIN_RUN,
+    gap_tolerance_minutes: float = NIGHT_GAP_TOLERANCE_MINUTES,
+    merge_gap_minutes: float = NIGHT_MERGE_GAP_MINUTES,
 ) -> list[SleepEpisode]:
     """Aggregiere zusammenhängende Nacht-Messungen zu Schlaf-Episoden.
 
-    Episoden, die weniger als ``min_duration_minutes`` dauern, werden
-    verworfen, weil sie wahrscheinlich Ausreißer sind. Der Standardwert
-    leitet sich aus der ESH-Empfehlung ab, dass die Nachtphase mindestens
-    ein paar zusammenhängende Stunden umfassen sollte.
+    Hyperparameter (siehe Modul-Head für Details und Default-Werte):
 
-    Wenn ``night_ref_outlier`` (eine 0/1-Maske pro Messung aus dem Feature-
-    Engineering) übergeben wird, kennzeichnen wir innerhalb jeder Episode
-    Läufe von mindestens ``min_arousal_run`` Outliern als Aufwach-Vermutung.
-    Die Episode bleibt dabei eine Episode — wir setzen sie nur fort, wenn
-    sich die Werte danach in den ruhigen Bereich zurück bewegen (genau die
-    Anforderung aus der Aufgabenstellung).
+    * ``gap_tolerance_minutes`` — Maximale Lücke zwischen zwei Nacht-Messungen
+      innerhalb einer Episode. Wird sie überschritten, beginnt eine neue
+      Episode.
+    * ``merge_gap_minutes`` — Zwei direkt benachbarte Nacht-Episoden werden
+      im Post-Processing zusammengezogen, wenn die Pause zwischen ihnen
+      kürzer als dieser Wert ist. Das verhindert 15–60-Minuten-Fragmente
+      durch einzelne abweichende Messungen mitten in der Nacht.
+    * ``min_arousal_run`` — Mindestanzahl aufeinanderfolgender Outlier, die
+      als Aufwach-Phase erkannt werden (die Episode wird dabei nicht
+      geteilt, nur annotiert).
+
+    Liegt ``night_ref_outlier`` (0/1-Maske pro Messung aus dem Feature-
+    Engineering) vor, werden Outlier-Läufe innerhalb einer Episode als
+    Aufwach-Vermutung annotiert.
     """
 
     if len(timestamps) == 0 or is_night.size == 0:
@@ -169,7 +206,7 @@ def detect_sleep_episodes(
     episodes: list[SleepEpisode] = []
     current: list[int] = []
     last_ts: datetime | None = None
-    GAP_TOLERANCE = timedelta(hours=2)
+    gap_tolerance = timedelta(minutes=max(0.0, float(gap_tolerance_minutes)))
 
     for i in sorted_idx:
         if not is_night[i]:
@@ -182,7 +219,7 @@ def detect_sleep_episodes(
             last_ts = None
             continue
         ts = timestamps[i]
-        if last_ts is not None and (ts - last_ts) > GAP_TOLERANCE:
+        if last_ts is not None and (ts - last_ts) > gap_tolerance:
             episodes.append(_build_episode(
                 current, timestamps, age_years, onset_latency_minutes,
                 night_ref_outlier, min_arousal_run,
@@ -196,6 +233,13 @@ def detect_sleep_episodes(
             current, timestamps, age_years, onset_latency_minutes,
             night_ref_outlier, min_arousal_run,
         ))
+
+    if merge_gap_minutes > 0.0:
+        episodes = _merge_close_night_episodes(
+            episodes,
+            merge_gap_minutes=merge_gap_minutes,
+            age_years=age_years,
+        )
 
     return episodes
 
@@ -240,6 +284,129 @@ def _build_episode(
         confidence=float(confidence),
         arousal_events=arousals,
         episode_type=episode_type,
+    )
+
+
+def _episode_confidence(
+    start: datetime,
+    end: datetime,
+    arousals: list[ArousalEvent],
+    age_years: float | None,
+) -> float:
+    """Einheitliche Konfidenz-Berechnung (wird beim Mergen wiederverwendet)."""
+
+    duration_h = (end - start).total_seconds() / 3600.0
+    if duration_h <= 0:
+        return 0.0
+    expected_lo, expected_hi = expected_sleep_range(age_years)
+    if expected_lo <= duration_h <= expected_hi:
+        base = 1.0
+    else:
+        distance = min(abs(duration_h - expected_lo), abs(duration_h - expected_hi))
+        base = max(0.0, 1.0 - distance / max(expected_hi, 1.0))
+    if arousals:
+        base = max(0.0, base - 0.1 * min(3, len(arousals)))
+    return float(base)
+
+
+def _merge_close_night_episodes(
+    episodes: list[SleepEpisode],
+    *,
+    merge_gap_minutes: float,
+    age_years: float | None,
+) -> list[SleepEpisode]:
+    """Verschmilz zeitlich eng benachbarte Nacht-Episoden zu einer Episode.
+
+    Zwei Episoden vom Typ ``night`` oder ``other`` werden zusammengezogen,
+    wenn die Lücke zwischen ``prev.end`` und ``next.start`` kürzer als
+    ``merge_gap_minutes`` ist. Nickerchen (``nap``) bleiben davon unberührt,
+    weil das :func:`apply_nap_recurrence_gate` sie eigenständig filtert.
+
+    Die Merging-Logik ist bewusst sequenziell: wir laufen einmal durch die
+    sortierten Episoden und bauen das Ergebnis inkrementell auf. So entsteht
+    ein stabiles, vorhersagbares Verhalten auch bei mehreren benachbarten
+    Fragmenten.
+    """
+
+    if not episodes:
+        return episodes
+
+    sorted_eps = sorted(episodes, key=lambda ep: ep.start)
+    merged: list[SleepEpisode] = []
+    for ep in sorted_eps:
+        if not merged:
+            merged.append(ep)
+            continue
+        prev = merged[-1]
+        # Naps werden separat behandelt und nicht mit Nacht-Episoden vermischt.
+        if prev.episode_type == EPISODE_TYPE_NAP or ep.episode_type == EPISODE_TYPE_NAP:
+            merged.append(ep)
+            continue
+        gap_minutes = (ep.start - prev.end).total_seconds() / 60.0
+        if gap_minutes < 0.0 or gap_minutes > merge_gap_minutes:
+            merged.append(ep)
+            continue
+        combined_indices = list(prev.measurement_indices) + list(ep.measurement_indices)
+        combined_arousals = list(prev.arousal_events) + list(ep.arousal_events)
+        merged[-1] = SleepEpisode(
+            start=prev.start,
+            end=ep.end,
+            sleep_onset_estimate=prev.sleep_onset_estimate,
+            wake_estimate=ep.end,
+            measurement_indices=combined_indices,
+            confidence=_episode_confidence(prev.start, ep.end, combined_arousals, age_years),
+            arousal_events=combined_arousals,
+            episode_type=classify_episode_type(prev.start, ep.end),
+        )
+    return merged
+
+
+@dataclass
+class ShortEpisodeFilterResult:
+    """Ergebnis des Mindestdauer-Filters für Nicht-Nap-Episoden."""
+
+    accepted_episodes: list[SleepEpisode] = field(default_factory=list)
+    rejected_episodes: list[SleepEpisode] = field(default_factory=list)
+    min_duration_minutes: float = 0.0
+
+
+def filter_short_night_episodes(
+    episodes: list[SleepEpisode],
+    *,
+    min_duration_minutes: float = NIGHT_MIN_EPISODE_MINUTES,
+) -> ShortEpisodeFilterResult:
+    """Trenne zu kurze Nicht-Nap-Episoden (Fragmente) von echten Schlafphasen.
+
+    Der Filter greift nur bei Episoden vom Typ ``night`` oder ``other`` —
+    Nap-Kandidaten werden vom :func:`apply_nap_recurrence_gate` über eine
+    eigene Mindestdauer gesteuert (siehe :data:`MIN_NAP_DURATION_MINUTES`).
+
+    ``min_duration_minutes`` <= 0 deaktiviert den Filter und gibt alle
+    Episoden unverändert zurück.
+    """
+
+    threshold = float(min_duration_minutes)
+    if threshold <= 0.0:
+        return ShortEpisodeFilterResult(
+            accepted_episodes=list(episodes),
+            rejected_episodes=[],
+            min_duration_minutes=0.0,
+        )
+
+    accepted: list[SleepEpisode] = []
+    rejected: list[SleepEpisode] = []
+    for ep in episodes:
+        if ep.episode_type == EPISODE_TYPE_NAP:
+            accepted.append(ep)
+            continue
+        if ep.duration_minutes >= threshold:
+            accepted.append(ep)
+        else:
+            rejected.append(ep)
+    return ShortEpisodeFilterResult(
+        accepted_episodes=accepted,
+        rejected_episodes=rejected,
+        min_duration_minutes=threshold,
     )
 
 
