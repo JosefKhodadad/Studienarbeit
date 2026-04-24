@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-04-24T07:42:51Z",
+  "created_at": "2026-04-24T18:56:10Z",
   "sample_count": 2554,
   "positive_count": 361,
   "feature_names": [
@@ -40,10 +40,10 @@
     "seed": 1337
   },
   "history_summary": {
-    "epochs_run": 73,
-    "final_loss": 0.021648358553647995,
-    "final_val_loss": 0.018241604790091515,
-    "best_val_loss": 0.017112737521529198
+    "epochs_run": 51,
+    "final_loss": 0.024797726422548294,
+    "final_val_loss": 0.026879947632551193,
+    "best_val_loss": 0.026726005598902702
   },
   "notes": "repo:2554 Messungen aus 3 Berichten"
 }

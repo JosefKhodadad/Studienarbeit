@@ -25,7 +25,13 @@ from app.schemas.hilo_import import (
 from app.services.aggregation_service import VALID_MEASUREMENT_TYPES, AggregationService
 from app.services.classification_service import NightDayClassifier
 from app.services.ml.feature_engineering import NightDayReference
-from app.services.ml.sleep_phase import detect_sleep_episodes, expected_sleep_range
+from app.services.ml.sleep_phase import (
+    MIN_NAP_DURATION_MINUTES,
+    SleepEpisode,
+    apply_nap_recurrence_gate,
+    detect_sleep_episodes,
+    expected_sleep_range,
+)
 from app.services.parser_service import HiloParserService
 from app.services.repository import InMemoryImportRepository
 
@@ -129,8 +135,13 @@ class ImportService:
             report_items.append(ReportListItem.model_validate(item))
 
         methods_seen: set[str] = set()
-        sleep_episodes: list[dict] = []
+        # Pro Episode wird der zugehörige report_id mitgeführt; außerdem halten
+        # wir einen Mapping-Array von Episoden-lokalem Timestamp-Index zur
+        # globalen Position in ``measurements``. So können wir nach dem Nap-
+        # Gate das ``is_night``-Flag für verworfene Kandidaten zurücksetzen.
+        pending_episodes: list[tuple[SleepEpisode, str, list[int]]] = []
         latest_age: float | None = None
+        observation_days: set = set()
 
         # Cross-Report-Aggregation: Mittelwerte aus allen PDF-Übersichten
         # einsammeln, damit das Dashboard nicht nur den aktuellen Bericht,
@@ -168,6 +179,7 @@ class ImportService:
             timestamps: list[_dt] = []
             is_night_arr: list[bool] = []
             ts_outliers: list[float] = []
+            local_to_global: list[int] = []
             for measurement, result in zip(raw_measurements, classifications):
                 methods_seen.add(result.method)
                 enriched = dict(measurement)
@@ -178,6 +190,7 @@ class ImportService:
                 enriched["classification_score"] = result.score
                 enriched["classification_method"] = result.method
                 measurements.append(enriched)
+                global_idx = len(measurements) - 1
                 try:
                     parsed_ts = _dt.fromisoformat(measurement["datetime"])
                     # Doppelte Absicherung gegen vermischte Datentypen:
@@ -187,6 +200,8 @@ class ImportService:
                         parsed_ts = parsed_ts.astimezone().replace(tzinfo=None)
                     timestamps.append(parsed_ts)
                     is_night_arr.append(bool(result.is_night))
+                    local_to_global.append(global_idx)
+                    observation_days.add(parsed_ts.date())
                 except (KeyError, ValueError):
                     continue
                 idx = len(timestamps) - 1
@@ -202,9 +217,37 @@ class ImportService:
                     night_ref_outlier=_np.asarray(ts_outliers, dtype=_np.float64),
                 )
                 for ep in episodes:
-                    payload_ep = ep.to_dict()
-                    payload_ep["report_id"] = report_id
-                    sleep_episodes.append(payload_ep)
+                    pending_episodes.append((ep, report_id, list(local_to_global)))
+
+        # Nap-Gate über alle Reports hinweg: Zu kurze Mittagsepisoden oder
+        # einzelne Zufallstreffer werden verworfen. Für rejected Nap-Episoden
+        # setzen wir das ``is_night``-Flag der zugehörigen Messungen zurück,
+        # damit Anzeige und Klassifikation kohärent bleiben.
+        all_episodes: list[SleepEpisode] = [ep for ep, _rid, _map in pending_episodes]
+        decision = apply_nap_recurrence_gate(
+            all_episodes,
+            observation_day_count=len(observation_days),
+        )
+        rejected_ids = {id(ep) for ep in decision.rejected_episodes}
+
+        sleep_episodes: list[dict] = []
+        for ep, report_id, idx_map in pending_episodes:
+            if id(ep) in rejected_ids:
+                # Zurücknehmen: für jede Messung der verworfenen Nap-Episode
+                # das Nacht-Flag aufheben und die Methode markieren.
+                for local_idx in ep.measurement_indices:
+                    if 0 <= local_idx < len(idx_map):
+                        global_idx = idx_map[local_idx]
+                        measurements[global_idx]["is_night"] = False
+                        existing_method = measurements[global_idx].get("classification_method") or ""
+                        if "nap_gate_reverted" not in existing_method:
+                            measurements[global_idx]["classification_method"] = (
+                                f"{existing_method}+nap_gate_reverted" if existing_method else "nap_gate_reverted"
+                            )
+                continue
+            payload_ep = ep.to_dict()
+            payload_ep["report_id"] = report_id
+            sleep_episodes.append(payload_ep)
 
         measurements.sort(key=lambda item: item.get("datetime") or "")
 
@@ -213,6 +256,14 @@ class ImportService:
         )
 
         expected_range = expected_sleep_range(latest_age) if measurements else None
+
+        nap_info = {
+            "recurrent_pattern_detected": decision.recurrent_pattern_detected,
+            "unique_nap_days": decision.unique_nap_days,
+            "observation_day_count": decision.observation_day_count,
+            "min_duration_minutes": float(MIN_NAP_DURATION_MINUTES),
+            "rejected_candidate_count": len(decision.rejected_episodes),
+        }
 
         return UnifiedMeasurementsResponse.model_validate(
             {
@@ -223,6 +274,7 @@ class ImportService:
                 "sleep_episodes": sleep_episodes,
                 "expected_sleep_hours": expected_range,
                 "cross_report_averages": cross_avg.as_dict(),
+                "nap_pattern": nap_info,
             }
         )
 

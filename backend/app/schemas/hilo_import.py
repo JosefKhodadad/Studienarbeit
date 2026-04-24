@@ -129,6 +129,27 @@ class SleepEpisodeSummary(BaseModel):
     confidence: float = 0.0
     report_id: str | None = None
     arousal_events: list[ArousalEventSummary] = Field(default_factory=list)
+    # ``episode_type``: "night" | "nap" | "other". Frontend kann damit Nacht-
+    # und Mittagsschlaf optisch unterscheiden.
+    episode_type: str = "night"
+    duration_minutes: float = 0.0
+
+
+class NapPatternInfo(BaseModel):
+    """Meta-Information zur Nickerchen-Erkennung über alle Reports hinweg.
+
+    Das Unified-View nutzt diese Angabe, um im UI anzuzeigen, ob ein
+    wiederkehrendes Mittagsschlaf-Muster gefunden wurde. Wird das Gate nicht
+    passiert, bleibt ``recurrent_pattern_detected`` ``false`` und es werden
+    keine Nap-Episoden ausgeliefert, selbst wenn das Modell mittags einzelne
+    Punkte als "Schlaf" einstufen wollte.
+    """
+
+    recurrent_pattern_detected: bool = False
+    unique_nap_days: int = 0
+    observation_day_count: int = 0
+    min_duration_minutes: float = 45.0
+    rejected_candidate_count: int = 0
 
 
 class CrossReportAverages(BaseModel):
@@ -157,6 +178,7 @@ class UnifiedMeasurementsResponse(BaseModel):
     sleep_episodes: list[SleepEpisodeSummary] = Field(default_factory=list)
     expected_sleep_hours: tuple[float, float] | None = None
     cross_report_averages: CrossReportAverages = Field(default_factory=CrossReportAverages)
+    nap_pattern: NapPatternInfo = Field(default_factory=NapPatternInfo)
 
 
 class DirectImportPatient(BaseModel):

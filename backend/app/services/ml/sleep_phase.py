@@ -23,7 +23,7 @@ Diese Werte fließen nur als sanfte Plausibilitätsprüfung ein — die
 eigentliche Detektion stützt sich auf die Modellausgabe.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -39,6 +39,32 @@ _SLEEP_HOURS_BY_AGE = (
 
 _DEFAULT_SLEEP_RANGE = (7.0, 9.0)
 _DEFAULT_ONSET_LATENCY_MIN = 15  # Minuten Sleep Onset Latency
+
+
+# Episodentypen: werden vom Unified-View genutzt, um Nacht- und Mittagsschlaf
+# gezielt unterschiedlich zu behandeln (z. B. Darstellung, Gate für Naps).
+EPISODE_TYPE_NIGHT = "night"
+EPISODE_TYPE_NAP = "nap"
+EPISODE_TYPE_OTHER = "other"
+
+# Mittagsfenster für die Nickerchen-Erkennung (inklusive Start, exklusive Ende).
+# Die Spanne deckt typische Siesta-Zeiten ab (vgl. Milner & Cote, 2009,
+# "Benefits of napping in healthy adults", Journal of Sleep Research 18).
+NAP_WINDOW_START_HOUR = 11
+NAP_WINDOW_END_HOUR = 17
+
+# Mindestdauer für ein als Nickerchen gewertetes Muster. 45 min setzt eine
+# erkennbare Schlafphase voraus (Brooks & Lack, 2006: Nickerchen ab ca. 30 min
+# liefern messbare Erholung; unter 30 min sind es eher "power naps", ohne dass
+# die Blutdruckkurve typische Dipping-Muster zeigt).
+MIN_NAP_DURATION_MINUTES = 45.0
+
+# Gate gegen sporadische Mittags-Ausreißer: ein Nickerchen-Muster wird erst
+# akzeptiert, wenn es an mindestens ``NAP_RECURRENCE_MIN_DAYS`` einzelnen Tagen
+# auftritt ODER auf mindestens ``NAP_RECURRENCE_FRACTION`` der beobachteten
+# Tage. Ziel: keine Nap-Klassifikation für einzelne Zufallstreffer.
+NAP_RECURRENCE_MIN_DAYS = 2
+NAP_RECURRENCE_FRACTION = 0.25
 
 
 @dataclass
@@ -73,10 +99,15 @@ class SleepEpisode:
     measurement_indices: list[int]
     confidence: float
     arousal_events: list[ArousalEvent] = None  # type: ignore[assignment]
+    episode_type: str = EPISODE_TYPE_NIGHT
 
     def __post_init__(self) -> None:
         if self.arousal_events is None:
             self.arousal_events = []
+
+    @property
+    def duration_minutes(self) -> float:
+        return (self.end - self.start).total_seconds() / 60.0
 
     def to_dict(self) -> dict:
         return {
@@ -87,6 +118,8 @@ class SleepEpisode:
             "measurement_indices": list(self.measurement_indices),
             "confidence": float(self.confidence),
             "arousal_events": [ev.to_dict() for ev in self.arousal_events],
+            "episode_type": self.episode_type,
+            "duration_minutes": float(self.duration_minutes),
         }
 
 
@@ -196,6 +229,8 @@ def _build_episode(
     if arousals:
         confidence = max(0.0, confidence - 0.1 * min(3, len(arousals)))
 
+    episode_type = classify_episode_type(start, end)
+
     return SleepEpisode(
         start=start,
         end=end,
@@ -204,6 +239,118 @@ def _build_episode(
         measurement_indices=list(indices),
         confidence=float(confidence),
         arousal_events=arousals,
+        episode_type=episode_type,
+    )
+
+
+def classify_episode_type(start: datetime, end: datetime) -> str:
+    """Ordne eine Episode einem Typ zu: Nacht, Nickerchen oder "other".
+
+    Eine Episode gilt als ``night``, wenn sie das typische Nachtfenster
+    (22..07 Uhr) berührt oder über Mitternacht reicht. Ein ``nap`` liegt
+    vollständig im Mittagsfenster (:data:`NAP_WINDOW_START_HOUR` bis
+    :data:`NAP_WINDOW_END_HOUR`) und beginnt und endet am gleichen Tag.
+    Alles andere — z. B. früher Abend oder später Vormittag — bleibt
+    ``other`` und wird vom Frontend nur als generisches Ruhe-Fenster
+    gezeigt.
+    """
+
+    if start.date() != end.date():
+        return EPISODE_TYPE_NIGHT
+    start_hour = start.hour
+    end_hour = end.hour
+    if start_hour >= 22 or end_hour < 7:
+        return EPISODE_TYPE_NIGHT
+    if (
+        NAP_WINDOW_START_HOUR <= start_hour < NAP_WINDOW_END_HOUR
+        and NAP_WINDOW_START_HOUR <= end_hour < NAP_WINDOW_END_HOUR
+    ):
+        return EPISODE_TYPE_NAP
+    return EPISODE_TYPE_OTHER
+
+
+@dataclass
+class NapGateDecision:
+    """Ergebnis des Nickerchen-Gates über alle Reports hinweg.
+
+    ``accepted_episodes`` enthält die Episoden, die als echte Nickerchen
+    übernommen werden. ``rejected_episodes`` sind Kandidaten, die entweder
+    zu kurz waren oder mangels wiederkehrendem Muster verworfen wurden —
+    das aufrufende Modul kann für diese Messungen das Nacht-Flag
+    zurücksetzen.
+    """
+
+    accepted_episodes: list[SleepEpisode] = field(default_factory=list)
+    rejected_episodes: list[SleepEpisode] = field(default_factory=list)
+    recurrent_pattern_detected: bool = False
+    unique_nap_days: int = 0
+    observation_day_count: int = 0
+
+
+def apply_nap_recurrence_gate(
+    episodes: list[SleepEpisode],
+    *,
+    observation_day_count: int,
+    min_duration_minutes: float = MIN_NAP_DURATION_MINUTES,
+    recurrence_min_days: int = NAP_RECURRENCE_MIN_DAYS,
+    recurrence_fraction: float = NAP_RECURRENCE_FRACTION,
+) -> NapGateDecision:
+    """Akzeptiere Nickerchen nur bei ausreichender Dauer und Wiederholung.
+
+    Das Gate arbeitet auf bereits zu Episoden aggregierten Daten:
+
+    1. **Dauer-Filter** — Episoden vom Typ ``nap`` mit einer Dauer unter
+       ``min_duration_minutes`` werden verworfen. Damit wird ein einzelnes
+       mittägliches Ausreißer-Paar nicht sofort zum Nickerchen.
+    2. **Wiederholungs-Gate** — Treten nach Filter 1 weniger Nap-Tage als
+       ``recurrence_min_days`` auf *und* ist der Anteil nap-positiver Tage
+       kleiner als ``recurrence_fraction`` der beobachteten Tage, werden
+       alle Nap-Kandidaten verworfen. So bleibt die Klassifikation "kein
+       Nickerchen" der Normalfall, solange kein regelmäßiges Muster sichtbar
+       ist.
+
+    ``observation_day_count`` ist die Anzahl unterschiedlicher Kalendertage
+    mit Messdaten im gesamten betrachteten Zeitraum (alle Reports). Für 0
+    wird der Bruchteil-Test automatisch übersprungen.
+    """
+
+    candidates = [ep for ep in episodes if ep.episode_type == EPISODE_TYPE_NAP]
+    if not candidates:
+        return NapGateDecision(
+            accepted_episodes=[],
+            rejected_episodes=[],
+            recurrent_pattern_detected=False,
+            unique_nap_days=0,
+            observation_day_count=max(0, observation_day_count),
+        )
+
+    long_enough = [ep for ep in candidates if ep.duration_minutes >= min_duration_minutes]
+    too_short = [ep for ep in candidates if ep.duration_minutes < min_duration_minutes]
+
+    unique_nap_days = {ep.start.date() for ep in long_enough}
+    n_days = len(unique_nap_days)
+
+    fraction_gate = (
+        observation_day_count > 0
+        and n_days >= recurrence_fraction * observation_day_count
+    )
+    count_gate = n_days >= recurrence_min_days
+    recurrent = bool(long_enough) and (count_gate or fraction_gate)
+
+    if recurrent:
+        accepted = list(long_enough)
+        rejected = list(too_short)
+    else:
+        # Kein wiederkehrendes Muster — alle Nap-Kandidaten zurücknehmen.
+        accepted = []
+        rejected = list(candidates)
+
+    return NapGateDecision(
+        accepted_episodes=accepted,
+        rejected_episodes=rejected,
+        recurrent_pattern_detected=recurrent,
+        unique_nap_days=n_days,
+        observation_day_count=max(0, observation_day_count),
     )
 
 
