@@ -32,9 +32,9 @@
 
 <main id="dashboard-root">
   <div class="page-header">
-    <h1 class="page-title">Blutdruck Uebersicht</h1>
+    <h1 class="page-title">Blutdruck Übersicht</h1>
     <p class="page-subtitle" id="lastUpdate">
-      Noch keine importierten Daten vorhanden. Sie koennen weiterhin Daten im
+      Noch keine importierten Daten vorhanden. Sie können weiterhin Daten im
       <a href="configurator.html" class="inline-link">Konfigurator</a> eintragen.
     </p>
   </div>
@@ -54,7 +54,7 @@
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
           <polyline points="14 2 14 8 20 8"/>
         </svg>
-        <span class="file-picker-text">PDF auswaehlen</span>
+        <span class="file-picker-text">PDF auswählen</span>
       </label>
       <button type="submit" class="btn btn-primary">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -65,13 +65,13 @@
         Import starten
       </button>
     </form>
-    <div class="import-status" id="importStatus">Bereit fuer den PDF-Import.</div>
+    <div class="import-status" id="importStatus">Bereit für den PDF-Import.</div>
   </section>
 
   <section class="reports-bar" id="reportsBar" hidden>
     <div class="reports-bar-header">
       <span class="reports-bar-title">Importierte Berichte</span>
-      <span class="reports-bar-hint">Klicken zum Aktivieren - Papierkorb loescht einen Bericht komplett</span>
+      <span class="reports-bar-hint">Klicken zum Aktivieren - Papierkorb löscht einen Bericht komplett</span>
     </div>
     <div class="reports-bar-chips" id="reportsBarChips"></div>
   </section>
@@ -86,7 +86,7 @@
         <div class="summary-item"><span class="summary-label">Name</span><span class="summary-value" id="summaryName">-</span></div>
         <div class="summary-item"><span class="summary-label">Alter</span><span class="summary-value" id="summaryAge">-</span></div>
         <div class="summary-item"><span class="summary-label">Geschlecht</span><span class="summary-value" id="summaryGender">-</span></div>
-        <div class="summary-item"><span class="summary-label">Groesse</span><span class="summary-value" id="summaryHeight">-</span></div>
+        <div class="summary-item"><span class="summary-label">Größe</span><span class="summary-value" id="summaryHeight">-</span></div>
         <div class="summary-item"><span class="summary-label">Gewicht</span><span class="summary-value" id="summaryWeight">-</span></div>
         <div class="summary-item"><span class="summary-label">E-Mail</span><span class="summary-value" id="summaryEmail">-</span></div>
       </div>
@@ -103,6 +103,7 @@
         <div class="month-stat"><span class="month-stat-label">Unknown</span><span class="month-stat-value" id="summaryUnknown">0</span></div>
       </div>
       <div class="summary-metrics">
+        <div class="metric-chip">Armband: <strong id="summaryArmband">0</strong></div>
         <div class="metric-chip">Kalibrierung: <strong id="summaryCalibration">0</strong></div>
         <div class="metric-chip">Manschette: <strong id="summaryCuff">0</strong></div>
         <div class="metric-chip">Telefon: <strong id="summaryPhone">0</strong></div>
@@ -121,7 +122,7 @@
         <div class="bp-average-source" id="avgScopeLabel">Quelle: aktueller Bericht</div>
       </div>
       <div class="overview-stats" id="overviewStats">
-        <div class="overview-stats-header">PDF-Uebersichtstabelle (SYS / DIA)</div>
+        <div class="overview-stats-header">PDF-Übersichtstabelle (SYS / DIA)</div>
         <table class="overview-stats-table">
           <thead>
             <tr>
@@ -155,13 +156,28 @@
       </div>
     </div>
 
-    <div class="summary-card warning-summary">
+    <div class="summary-card bp-distribution-card">
       <div class="summary-card-header">
-        <span class="summary-card-title">Parsing-Warnungen</span>
+        <span class="summary-card-title">Blutdruckkategorien (orientiert an ESH 2023)</span>
+        <span class="summary-pill" id="bpDistributionTotal">0 Messungen</span>
       </div>
-      <ul class="warning-list" id="warningList">
-        <li>Keine Warnungen vorhanden.</li>
-      </ul>
+      <div class="bp-distribution-body">
+        <div class="bp-distribution-chart-wrap">
+          <canvas id="bpDistributionChart" aria-label="Blutdruckkategorien als Kreisdiagramm"></canvas>
+          <div class="bp-distribution-empty" id="bpDistributionEmpty">
+            Noch keine Daten vorhanden.
+          </div>
+        </div>
+        <ul class="bp-distribution-legend" id="bpDistributionLegend"></ul>
+      </div>
+      <div class="bp-distribution-footer">
+        Einteilung nach der ESH-Leitlinie 2023 (Mancia et al.). Bei
+        unterschiedlichen Bereichen für SYS und DIA zählt die höhere Kategorie.
+      </div>
+      <div class="warning-inline" id="warningInline" hidden>
+        <span class="warning-inline-title">Parsing-Warnungen</span>
+        <ul class="warning-list" id="warningList"></ul>
+      </div>
     </div>
   </section>
 
@@ -174,7 +190,7 @@
             <path d="M8 8V6a4 4 0 0 1 8 0v2"/>
             <line x1="12" y1="13" x2="12" y2="17"/>
           </svg>
-          Manschettenloses Geraet
+          Manschettenloses Gerät
         </div>
         <div class="column-subtitle">Hilo / Kalibrierung mit Manschette</div>
       </div>
@@ -199,7 +215,7 @@
       <div class="data-card">
         <div class="data-card-header">
           <span class="data-card-title">Messungen</span>
-          <span class="entry-count" id="count-cuffless">0 Eintraege</span>
+          <span class="entry-count" id="count-cuffless">0 Einträge</span>
         </div>
         <div class="data-list" id="list-cuffless">
           <div class="empty-state">Noch keine Daten vorhanden.</div>
@@ -239,7 +255,7 @@
       <div class="data-card">
         <div class="data-card-header">
           <span class="data-card-title">Messungen</span>
-          <span class="entry-count" id="count-phone">0 Eintraege</span>
+          <span class="entry-count" id="count-phone">0 Einträge</span>
         </div>
         <div class="data-list" id="list-phone">
           <div class="empty-state">Noch keine Daten vorhanden.</div>
@@ -280,7 +296,7 @@
       <div class="data-card">
         <div class="data-card-header">
           <span class="data-card-title">Messungen</span>
-          <span class="entry-count" id="count-cuff">0 Eintraege</span>
+          <span class="entry-count" id="count-cuff">0 Einträge</span>
         </div>
         <div class="data-list" id="list-cuff">
           <div class="empty-state">Noch keine Daten vorhanden.</div>
@@ -293,7 +309,7 @@
     <div class="analysis-header">
       <h2 class="analysis-title">Datenanalyse</h2>
       <p class="analysis-subtitle">
-        Gesamtansicht aller Messungen (berichtsuebergreifend) und Methodenvergleich
+        Gesamtansicht aller Messungen (berichtsübergreifend) und Methodenvergleich
       </p>
       <div class="analysis-meta" id="analysisMeta">
         <span id="analysisDataSource">Datenquelle: -</span>
@@ -320,7 +336,7 @@
         </div>
       </div>
       <div class="ml-panel-info" id="mlPanelInfo">
-        Noch kein trainiertes Modell. Solange faellt das System auf die regelbasierte Tag/Nacht-Schaetzung zurueck.
+        Noch kein trainiertes Modell. Solange fällt das System auf die regelbasierte Tag/Nacht-Schätzung zurück.
       </div>
       <div class="ml-panel-sleep" id="mlSleepInfo" hidden></div>
     </div>
@@ -353,9 +369,9 @@
         <div class="control-group zoom-group">
           <span class="control-label">Zoom</span>
           <div class="zoom-buttons">
-            <button type="button" class="btn btn-ghost" id="zoom-in" title="Vergroessern">+</button>
+            <button type="button" class="btn btn-ghost" id="zoom-in" title="Vergrößern">+</button>
             <button type="button" class="btn btn-ghost" id="zoom-out" title="Verkleinern">-</button>
-            <button type="button" class="btn btn-secondary" id="zoom-reset" title="Ansicht zuruecksetzen">Reset</button>
+            <button type="button" class="btn btn-secondary" id="zoom-reset" title="Ansicht zurücksetzen">Reset</button>
           </div>
         </div>
 
@@ -371,7 +387,7 @@
             <button type="button" data-daynight="day">Tag / Ruhe</button>
             <button type="button" data-daynight="night">Nacht</button>
           </div>
-          <span class="daynight-hint" id="daynightHint" title="Die Klassifizierung ist eine Abschaetzung auf Basis von Uhrzeit und Messwerten. Quelle der Verteilung: Monatsbericht der Hilo-PDF.">Schaetzung - Details siehe Info</span>
+          <span class="daynight-hint" id="daynightHint" title="Die Klassifizierung ist eine Abschätzung auf Basis von Uhrzeit und Messwerten. Quelle der Verteilung: Monatsbericht der Hilo-PDF.">Schätzung - Details siehe Info</span>
         </div>
 
         <div class="control-group timewindow-group">
@@ -380,7 +396,7 @@
             <input type="date" id="twStart" aria-label="Von Datum" />
             <span class="tw-dash">-</span>
             <input type="date" id="twEnd" aria-label="Bis Datum" />
-            <button type="button" class="btn btn-ghost" id="twClear" title="Zeitfenster zuruecksetzen">Alle Tage</button>
+            <button type="button" class="btn btn-ghost" id="twClear" title="Zeitfenster zurücksetzen">Alle Tage</button>
           </div>
           <div class="timewindow-presets">
             <button type="button" class="btn btn-ghost" data-preset="1">1 Tag</button>
@@ -419,7 +435,7 @@
       <div class="data-card unified-table-card">
         <div class="data-card-header">
           <span class="data-card-title">Chronologische Messwertliste</span>
-          <span class="entry-count" id="unifiedCount">0 Eintraege</span>
+          <span class="entry-count" id="unifiedCount">0 Einträge</span>
         </div>
         <div class="unified-table-wrap">
           <table class="data-table">
@@ -442,16 +458,16 @@
 
     <div class="analysis-panel" id="panel-bland-altman" role="tabpanel" style="display:none">
       <div class="chart-card bland-chart-card">
-        <div class="chart-label">Bland-Altman Plot - Tagesmittelwert vs. Tagesvariabilitaet</div>
+        <div class="chart-label">Bland-Altman Plot - Tagesmittelwert vs. Tagesvariabilität</div>
         <div class="chart-wrap bland-chart-wrap">
           <canvas id="bland-chart"></canvas>
           <div class="chart-empty" id="bland-chart-empty">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><line x1="4" y1="12" x2="20" y2="12"/></svg>
-            Keine ausreichenden Daten fuer Bland-Altman.
+            Keine ausreichenden Daten für Bland-Altman.
           </div>
         </div>
         <div class="bland-legend-notes">
-          <span>Durchgezogen: mittlere Variabilitaet</span>
+          <span>Durchgezogen: mittlere Variabilität</span>
           <span>Gepunktet: +/-1,96 x SD (Limits of Agreement)</span>
           <span>Kreise: SBP, Dreiecke: DBP</span>
         </div>

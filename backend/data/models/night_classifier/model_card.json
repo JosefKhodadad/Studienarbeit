@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-04-23T08:17:16Z",
-  "sample_count": 2280,
-  "positive_count": 318,
+  "created_at": "2026-04-24T07:42:51Z",
+  "sample_count": 2554,
+  "positive_count": 361,
   "feature_names": [
     "sin_hour",
     "cos_hour",
@@ -40,10 +40,10 @@
     "seed": 1337
   },
   "history_summary": {
-    "epochs_run": 74,
-    "final_loss": 0.021542102098464966,
-    "final_val_loss": 0.022130925208330154,
-    "best_val_loss": 0.0208092350512743
+    "epochs_run": 73,
+    "final_loss": 0.021648358553647995,
+    "final_val_loss": 0.018241604790091515,
+    "best_val_loss": 0.017112737521529198
   },
-  "notes": "repo:2280 Messungen aus 3 Berichten"
+  "notes": "repo:2554 Messungen aus 3 Berichten"
 }

@@ -10,6 +10,7 @@ from app.models.blood_pressure import (
     ENTRY_STATUS_ORIGINAL,
 )
 from app.schemas.hilo_import import (
+    BloodPressureCategoryBreakdown,
     DirectImportRequest,
     HiloImportResponse,
     MeasurementTypeBreakdown,
@@ -249,11 +250,50 @@ class AggregationService:
                 armband=type_counter.get("armband", 0),
                 unknown=unknown_count,
             ),
+            measurement_count_by_bp_category=self._build_bp_categories(measurements),
             unknown_share=round((unknown_count / total_count), 4) if total_count else 0.0,
             day_rest=day_rest_section,
             night=night_section,
             all_measurements=all_section,
         )
+
+    def _build_bp_categories(self, measurements: list[dict]) -> BloodPressureCategoryBreakdown:
+        counter: Counter[str] = Counter()
+        for item in measurements:
+            category = self._classify_bp(item["systolic"], item["diastolic"])
+            counter[category] += 1
+        return BloodPressureCategoryBreakdown(
+            hypotension=counter.get("hypotension", 0),
+            optimal=counter.get("optimal", 0),
+            normal=counter.get("normal", 0),
+            high_normal=counter.get("high_normal", 0),
+            hypertension_grade_1=counter.get("hypertension_grade_1", 0),
+            hypertension_grade_2=counter.get("hypertension_grade_2", 0),
+            hypertension_grade_3=counter.get("hypertension_grade_3", 0),
+        )
+
+    def _classify_bp(self, sbp: int, dbp: int) -> str:
+        """Ordnet eine Einzelmessung einer ESH/ESC-Kategorie zu.
+
+        Grenzen nach Mancia et al., „2023 ESH Guidelines for the Management
+        of Arterial Hypertension". Bei unterschiedlichen Kategorien für
+        SBP und DBP gilt die höhere. Hypotonie ist in der ESH-Leitlinie
+        nicht ausdrücklich definiert; die Schwelle SBP < 90 mmHg bzw.
+        DBP < 60 mmHg folgt der verbreiteten WHO-Konvention.
+        """
+        if sbp < 90 or dbp < 60:
+            return "hypotension"
+        if sbp >= 180 or dbp >= 110:
+            return "hypertension_grade_3"
+        if sbp >= 160 or dbp >= 100:
+            return "hypertension_grade_2"
+        if sbp >= 140 or dbp >= 90:
+            return "hypertension_grade_1"
+        if sbp >= 130 or dbp >= 85:
+            return "high_normal"
+        if sbp >= 120 or dbp >= 80:
+            return "normal"
+        return "optimal"
 
     def _build_section(self, raw_summary: dict | None, key: str, measurements: list[dict]) -> SummarySection:
         source = (raw_summary or {}).get(key) or {}

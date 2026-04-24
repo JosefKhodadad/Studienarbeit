@@ -38,11 +38,33 @@ class MeasurementTypeBreakdown(BaseModel):
     unknown: int = 0
 
 
+class BloodPressureCategoryBreakdown(BaseModel):
+    """Verteilung der Messwerte auf ESH/ESC-Blutdruckkategorien.
+
+    Quelle: Mancia et al., „2023 ESH Guidelines for the Management of
+    Arterial Hypertension", Journal of Hypertension, 2023. Die Grenzen
+    gelten für Praxismessungen in Ruhe. Fällt SBP und DBP einer Messung
+    in verschiedene Kategorien, bestimmt die höhere das Ergebnis.
+    Hypotonie ist in der ESH-Leitlinie nicht ausdrücklich definiert;
+    die Schwelle SBP < 90 mmHg bzw. DBP < 60 mmHg folgt der in
+    klinischer Praxis üblichen WHO-Konvention.
+    """
+
+    hypotension: int = 0
+    optimal: int = 0
+    normal: int = 0
+    high_normal: int = 0
+    hypertension_grade_1: int = 0
+    hypertension_grade_2: int = 0
+    hypertension_grade_3: int = 0
+
+
 class MonthlySummary(BaseModel):
     measurement_count_total: int = 0
     measurement_count_day_rest: int = 0
     measurement_count_night: int = 0
     measurement_count_by_type: MeasurementTypeBreakdown = Field(default_factory=MeasurementTypeBreakdown)
+    measurement_count_by_bp_category: BloodPressureCategoryBreakdown = Field(default_factory=BloodPressureCategoryBreakdown)
     unknown_share: float = 0.0
     day_rest: SummarySection = Field(default_factory=SummarySection)
     night: SummarySection = Field(default_factory=SummarySection)

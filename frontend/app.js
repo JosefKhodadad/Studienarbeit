@@ -6,7 +6,7 @@ const DEFAULT_API_BASE = 'http://127.0.0.1:8000';
 const TYPES = {
   cuffless: {
     id: 'cuffless',
-    label: 'Manschettenloses Geraet',
+    label: 'Manschettenloses Gerät',
     short: 'Manschettenlos',
     color: '#6366f1',
   },
@@ -76,16 +76,16 @@ let _mlModelInfo = null;
 
 const ML_STATUS_LABELS = {
   idle: 'Bereit',
-  running: 'Training laeuft...',
+  running: 'Training läuft...',
   finished: 'Training abgeschlossen',
   failed: 'Training fehlgeschlagen',
 };
 
 const CLASSIFIER_METHOD_LABELS = {
-  keras_constrained: 'Keras-Modell + Monatszaehler-Constraint',
+  keras_constrained: 'Keras-Modell + Monatszähler-Constraint',
   score_threshold: 'Keras-Modell (Score-Schwelle)',
-  pdf_constrained: 'Heuristik + Monatszaehler-Constraint',
-  monthly_constraint: 'Heuristik + Monatszaehler-Constraint',
+  pdf_constrained: 'Heuristik + Monatszähler-Constraint',
+  monthly_constraint: 'Heuristik + Monatszähler-Constraint',
   heuristic: 'Regelbasierte Heuristik',
 };
 
@@ -96,7 +96,7 @@ function classifierMethodLabel(method) {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_NAMES_DE = [
-  'Januar', 'Februar', 'Maerz', 'April', 'Mai', 'Juni',
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ];
 
@@ -177,7 +177,7 @@ async function apiRequest(path, options = {}) {
       response = await fetch(`${base}${path}`, options);
     } catch (networkError) {
       lastError = new Error(
-        `Backend unter ${base} nicht erreichbar (${networkError.message}). Laeuft uvicorn auf diesem Port?`
+        `Backend unter ${base} nicht erreichbar (${networkError.message}). Läuft uvicorn auf diesem Port?`
       );
       continue;
     }
@@ -221,7 +221,7 @@ function fmtDatetime(iso) {
 function bpCategory(sys, dia) {
   if (sys < 120 && dia < 80) return { label: 'Optimal', cls: 'optimal' };
   if (sys < 130 && dia < 85) return { label: 'Normal', cls: 'normal' };
-  if (sys < 140 && dia < 90) return { label: 'Erhoeht', cls: 'elevated' };
+  if (sys < 140 && dia < 90) return { label: 'Erhöht', cls: 'elevated' };
   return { label: 'Hoch', cls: 'high' };
 }
 
@@ -361,7 +361,7 @@ function renderList(type, entries) {
   const count = document.getElementById(`count-${type}`);
   if (!list) return;
 
-  if (count) count.textContent = `${entries.length} ${entries.length === 1 ? 'Eintrag' : 'Eintraege'}`;
+  if (count) count.textContent = `${entries.length} ${entries.length === 1 ? 'Eintrag' : 'Einträge'}`;
 
   if (entries.length === 0) {
     list.innerHTML = `<div class="empty-state">Noch keine Messungen.<br><a href="configurator.html" style="color:${TYPES[type].color}">Jetzt eintragen -></a></div>`;
@@ -436,10 +436,36 @@ function buildManualViewModel() {
         phone_measurement: columns.phone.length,
         unknown: 0,
       },
+      measurement_count_by_bp_category: computeLocalBpDistribution(columns),
     },
     warnings: [],
     mode: 'manual',
   };
+}
+
+function computeLocalBpDistribution(columns) {
+  const breakdown = {
+    hypotension: 0, optimal: 0, normal: 0, high_normal: 0,
+    hypertension_grade_1: 0, hypertension_grade_2: 0, hypertension_grade_3: 0,
+  };
+  const classify = (sys, dia) => {
+    if (sys < 90 || dia < 60) return 'hypotension';
+    if (sys >= 180 || dia >= 110) return 'hypertension_grade_3';
+    if (sys >= 160 || dia >= 100) return 'hypertension_grade_2';
+    if (sys >= 140 || dia >= 90) return 'hypertension_grade_1';
+    if (sys >= 130 || dia >= 85) return 'high_normal';
+    if (sys >= 120 || dia >= 80) return 'normal';
+    return 'optimal';
+  };
+  for (const entries of Object.values(columns)) {
+    for (const entry of entries) {
+      const sys = Number(entry.sys);
+      const dia = Number(entry.dia);
+      if (!Number.isFinite(sys) || !Number.isFinite(dia)) continue;
+      breakdown[classify(sys, dia)] += 1;
+    }
+  }
+  return breakdown;
 }
 
 function mapImportedPayload(payload) {
@@ -497,19 +523,121 @@ function renderReportSummary(viewModel) {
   setText('summaryDay', summary.measurement_count_day_rest ?? 0);
   setText('summaryNight', summary.measurement_count_night ?? 0);
   setText('summaryUnknown', byType.unknown ?? 0);
-  const cuffless = (byType.armband ?? 0) + (byType.cuff_calibration ?? 0);
-  setText('summaryCalibration', cuffless);
+  setText('summaryArmband', byType.armband ?? 0);
+  setText('summaryCalibration', byType.cuff_calibration ?? 0);
   setText('summaryCuff', byType.cuff_measurement ?? 0);
   setText('summaryPhone', byType.phone_measurement ?? 0);
 
   renderBpAverages(summary);
+  renderBpDistribution(summary);
 
+  const warnings = viewModel.warnings || [];
+  const warningInline = document.getElementById('warningInline');
   const warningList = document.getElementById('warningList');
-  if (warningList) {
-    warningList.innerHTML = (viewModel.warnings || []).length > 0
-      ? viewModel.warnings.map((warning) => `<li>${warning}</li>`).join('')
-      : '<li>Keine Warnungen vorhanden.</li>';
+  if (warningList && warningInline) {
+    if (warnings.length > 0) {
+      warningList.innerHTML = warnings.map((warning) => `<li>${warning}</li>`).join('');
+      warningInline.hidden = false;
+    } else {
+      warningList.innerHTML = '';
+      warningInline.hidden = true;
+    }
   }
+}
+
+// --- Blutdruckkategorien (ESH/ESC 2023) ------------------------------
+
+const BP_CATEGORY_META = [
+  { key: 'optimal', label: 'Optimal', color: '#10b981', range: 'SYS < 120 und DIA < 80',  sourceKeys: ['hypotension', 'optimal'] },
+  { key: 'normal',  label: 'Normal',  color: '#84cc16', range: 'SYS 120–129 und DIA 80–84', sourceKeys: ['normal'] },
+  { key: 'erhoeht', label: 'Erhöht',  color: '#f59e0b', range: 'SYS 130–139 oder DIA 85–89', sourceKeys: ['high_normal'] },
+  { key: 'hoch',    label: 'Hoch',    color: '#ef4444', range: 'SYS ≥ 140 oder DIA ≥ 90',    sourceKeys: ['hypertension_grade_1', 'hypertension_grade_2', 'hypertension_grade_3'] },
+];
+
+function renderBpDistribution(summary) {
+  const canvas = document.getElementById('bpDistributionChart');
+  const emptyNode = document.getElementById('bpDistributionEmpty');
+  const legendNode = document.getElementById('bpDistributionLegend');
+  const totalNode = document.getElementById('bpDistributionTotal');
+  if (!canvas || !emptyNode || !legendNode) return;
+
+  const breakdown = (summary && summary.measurement_count_by_bp_category) || {};
+  const data = BP_CATEGORY_META.map((meta) => {
+    const count = meta.sourceKeys.reduce((sum, key) => sum + Number(breakdown[key] ?? 0), 0);
+    return { ...meta, count };
+  });
+  const total = data.reduce((acc, item) => acc + item.count, 0);
+
+  if (totalNode) {
+    totalNode.textContent = total > 0 ? `${total} Messungen` : 'Keine Daten';
+  }
+
+  if (total === 0) {
+    emptyNode.hidden = false;
+    canvas.style.display = 'none';
+    legendNode.innerHTML = '';
+    if (_charts.bpDistribution) {
+      _charts.bpDistribution.destroy();
+      delete _charts.bpDistribution;
+    }
+    return;
+  }
+
+  emptyNode.hidden = true;
+  canvas.style.display = '';
+
+  const labels = data.map((item) => item.label);
+  const values = data.map((item) => item.count);
+  const colors = data.map((item) => item.color);
+
+  if (_charts.bpDistribution) {
+    _charts.bpDistribution.data.labels = labels;
+    _charts.bpDistribution.data.datasets[0].data = values;
+    _charts.bpDistribution.data.datasets[0].backgroundColor = colors;
+    _charts.bpDistribution.update();
+  } else {
+    _charts.bpDistribution = new Chart(canvas.getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          backgroundColor: colors,
+          borderColor: 'rgba(15,23,42,0.9)',
+          borderWidth: 2,
+          hoverOffset: 6,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '58%',
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const value = Number(ctx.parsed ?? 0);
+                const share = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+                return `${ctx.label}: ${value} (${share} %)`;
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  legendNode.innerHTML = data.map((item) => {
+    if (item.count === 0) return '';
+    const share = ((item.count / total) * 100).toFixed(1);
+    return `
+      <li class="bp-legend-item" title="${item.range}">
+        <span class="bp-legend-dot" style="background:${item.color}"></span>
+        <span class="bp-legend-label">${item.label}</span>
+        <span class="bp-legend-value">${item.count} <em>(${share} %)</em></span>
+      </li>`;
+  }).join('');
 }
 
 function renderBpAverages(currentSummary) {
@@ -820,7 +948,7 @@ function renderUnifiedTable(measurements) {
   if (!tbody) return;
 
   if (count) {
-    count.textContent = `${measurements.length} ${measurements.length === 1 ? 'Eintrag' : 'Eintraege'}`;
+    count.textContent = `${measurements.length} ${measurements.length === 1 ? 'Eintrag' : 'Einträge'}`;
   }
 
   if (measurements.length === 0) {
@@ -1290,8 +1418,8 @@ function renderBlandAltmanChart() {
     if (empty) {
       empty.style.display = 'flex';
       const message = totalPoints === 0
-        ? ' Keine importierten Messdaten fuer Bland-Altman.'
-        : ' Nicht genuegend Tage mit Messwerten fuer einen sinnvollen Plot.';
+        ? ' Keine importierten Messdaten für Bland-Altman.'
+        : ' Nicht genügend Tage mit Messwerten für einen sinnvollen Plot.';
       const textNode = Array.from(empty.childNodes).find((n) => n.nodeType === Node.TEXT_NODE);
       if (textNode) textNode.textContent = message;
     }
@@ -1383,7 +1511,7 @@ function renderBlandAltmanChart() {
           beginAtZero: true,
           title: {
             display: true,
-            text: 'Tagesvariabilitaet (max - min, mmHg)',
+            text: 'Tagesvariabilität (max - min, mmHg)',
             color: '#e2e8f0',
             font: { size: 14, family: 'Inter, system-ui', weight: '600' },
             padding: { top: 0, bottom: 10 },
@@ -1421,13 +1549,13 @@ function renderAnalysisMeta() {
     } else if (reportCount === 1) {
       dataSourceEl.textContent = `Datenquelle: 1 Bericht - ${measurementCount} Messungen`;
     } else {
-      dataSourceEl.textContent = `Datenquelle: ${reportCount} Berichte zusammengefuehrt - ${measurementCount} Messungen`;
+      dataSourceEl.textContent = `Datenquelle: ${reportCount} Berichte zusammengeführt - ${measurementCount} Messungen`;
     }
   }
   if (noteEl) {
     const method = _unifiedPayload?.classification_method;
     noteEl.textContent = method
-      ? `Tag/Nacht-Schaetzung: ${classifierMethodLabel(method)}`
+      ? `Tag/Nacht-Schätzung: ${classifierMethodLabel(method)}`
       : '';
   }
 }
@@ -1448,7 +1576,7 @@ function _renderMlInfo() {
 
   if (_mlState.status === 'running') {
     const sources = (_mlState.sources || []).join(', ') || '-';
-    lines.push(`Training laeuft (${sources}).`);
+    lines.push(`Training läuft (${sources}).`);
   } else if (_mlState.status === 'failed' && _mlState.last_error) {
     lines.push(`Letzter Fehler: <strong>${_mlState.last_error}</strong>`);
   }
@@ -1490,7 +1618,7 @@ function _renderMlSleepInfo() {
   const parts = [];
   if (expected && Array.isArray(expected) && expected.length === 2) {
     parts.push(
-      `Erwartete naechtliche Schlafdauer (Altersgruppe): <strong>${expected[0]}-${expected[1]} h</strong> `
+      `Erwartete nächtliche Schlafdauer (Altersgruppe): <strong>${expected[0]}-${expected[1]} h</strong> `
       + `(NSF / Hirshkowitz et al. 2015).`
     );
   }
@@ -1529,7 +1657,7 @@ function renderMlPanel() {
   if (trainBtn) {
     trainBtn.disabled = status === 'running';
     trainBtn.textContent = status === 'running'
-      ? 'Training laeuft...'
+      ? 'Training läuft...'
       : (_mlState.model_available ? 'Modell neu trainieren' : 'Modell trainieren');
   }
 
@@ -1602,7 +1730,7 @@ async function startMlTraining() {
   const useCsv = document.getElementById('mlUseCsv')?.checked !== false;
   const useRepo = Boolean(document.getElementById('mlUseRepo')?.checked);
   if (!useCsv && !useRepo) {
-    showToast('Bitte mindestens eine Datenquelle auswaehlen.', 'error');
+    showToast('Bitte mindestens eine Datenquelle auswählen.', 'error');
     return;
   }
   try {
@@ -1685,7 +1813,7 @@ function renderReportsBar() {
     return `<span class="${cls}" data-report-id="${r.id}">
       <span class="report-chip-label">${label}</span>
       <span class="report-chip-meta">${meta}${source}</span>
-      <button type="button" class="report-chip-del" data-action="delete" data-report-id="${r.id}" title="Bericht loeschen" aria-label="Bericht loeschen">x</button>
+      <button type="button" class="report-chip-del" data-action="delete" data-report-id="${r.id}" title="Bericht löschen" aria-label="Bericht löschen">x</button>
     </span>`;
   }).join('');
 
@@ -1724,7 +1852,7 @@ async function deleteReport(reportId) {
   if (!reportId) return;
   const report = (_reportsList?.reports || []).find((r) => r.id === reportId);
   const label = reportLabel(report);
-  if (!confirm(`Bericht "${label}" inklusive aller Messungen unwiderruflich loeschen?`)) return;
+  if (!confirm(`Bericht "${label}" inklusive aller Messungen unwiderruflich löschen?`)) return;
   try {
     const listing = await apiRequest(`/api/reports/${encodeURIComponent(reportId)}`, { method: 'DELETE' });
     _reportsList = listing;
@@ -1752,9 +1880,9 @@ async function deleteReport(reportId) {
     if (document.getElementById('configurator-root')) {
       renderConfiguratorTable(_currentFilter);
     }
-    showToast('Bericht geloescht.');
+    showToast('Bericht gelöscht.');
   } catch (error) {
-    showToast(error.message || 'Loeschen fehlgeschlagen.', 'error');
+    showToast(error.message || 'Löschen fehlgeschlagen.', 'error');
   }
 }
 
@@ -1783,7 +1911,7 @@ function renderConfiguratorReportsCard() {
       </div>
       <div class="actions">
         ${r.is_current ? '' : `<button class="btn btn-ghost" type="button" data-action="activate" data-report-id="${r.id}">Aktivieren</button>`}
-        <button class="btn btn-danger" type="button" data-action="delete" data-report-id="${r.id}">Loeschen</button>
+        <button class="btn btn-danger" type="button" data-action="delete" data-report-id="${r.id}">Löschen</button>
       </div>
     </div>`;
   }).join('');
@@ -1943,7 +2071,7 @@ function setImportStatus(message, type = 'info') {
 function updateFilePickerLabel(file) {
   const textEl = document.querySelector('#pdfFileLabel .file-picker-text');
   if (!textEl) return;
-  textEl.textContent = file ? file.name : 'PDF auswaehlen';
+  textEl.textContent = file ? file.name : 'PDF auswählen';
   const label = document.getElementById('pdfFileLabel');
   if (label) label.classList.toggle('has-file', Boolean(file));
 }
@@ -1954,8 +2082,8 @@ async function handlePdfImport(event) {
   const file = fileInput?.files?.[0];
 
   if (!file) {
-    setImportStatus('Bitte zuerst eine PDF-Datei auswaehlen.', 'error');
-    showToast('Bitte eine PDF-Datei auswaehlen.', 'error');
+    setImportStatus('Bitte zuerst eine PDF-Datei auswählen.', 'error');
+    showToast('Bitte eine PDF-Datei auswählen.', 'error');
     return;
   }
 
@@ -2083,7 +2211,7 @@ function configuratorRowHtml(row) {
     <td>${dt.time}</td>
     <td class="row-actions">
       ${editButton}
-      <button class="btn btn-danger" onclick="${deleteAction}" type="button">Loeschen</button>
+      <button class="btn btn-danger" onclick="${deleteAction}" type="button">Löschen</button>
     </td>
   </tr>`;
 }
@@ -2132,21 +2260,21 @@ window.handleEdit = function(entryId) {
 };
 
 window.handleDeleteLocal = function(type, id) {
-  if (!confirm('Eintrag wirklich loeschen?')) return;
+  if (!confirm('Eintrag wirklich löschen?')) return;
   deleteLocalEntry(type, id);
   renderConfiguratorTable(_currentFilter);
-  showToast('Lokaler Eintrag geloescht');
+  showToast('Lokaler Eintrag gelöscht');
 };
 
 window.handleDeleteServer = async function(entryId) {
-  if (!confirm('Importierten Eintrag wirklich loeschen?')) return;
+  if (!confirm('Importierten Eintrag wirklich löschen?')) return;
   try {
     const payload = await apiRequest(`/api/measurements/${entryId}`, { method: 'DELETE' });
     _lastServerPayload = payload;
     renderConfiguratorTable(_currentFilter);
-    showToast('Eintrag geloescht.');
+    showToast('Eintrag gelöscht.');
   } catch (error) {
-    showToast(error.message || 'Loeschen fehlgeschlagen.', 'error');
+    showToast(error.message || 'Löschen fehlgeschlagen.', 'error');
   }
 };
 
@@ -2218,7 +2346,7 @@ async function handleConfiguratorSubmit(e) {
   const target = document.querySelector('input[name="saveTarget"]:checked')?.value || 'local';
 
   if (!type || !sysStr || !diaStr || !pulseStr || !dtVal) {
-    showToast('Bitte alle Felder ausfuellen.', 'error');
+    showToast('Bitte alle Felder ausfüllen.', 'error');
     return;
   }
   const sys = parseInt(sysStr, 10);

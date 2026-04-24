@@ -226,6 +226,84 @@ main { padding: 2rem; max-width: 1600px; margin: 0 auto; }
   gap: 0.5rem;
 }
 
+.bp-distribution-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.bp-distribution-body {
+  display: grid;
+  grid-template-columns: minmax(160px, 180px) 1fr;
+  gap: 1rem;
+  align-items: center;
+}
+.bp-distribution-chart-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+}
+.bp-distribution-chart-wrap canvas { width: 100% !important; height: 100% !important; }
+.bp-distribution-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  text-align: center;
+  padding: 0 1rem;
+}
+.bp-distribution-legend {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+.bp-legend-item {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+}
+.bp-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.bp-legend-label { color: var(--text-primary); }
+.bp-legend-value { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.bp-legend-value em { color: var(--text-dim); font-style: normal; }
+.bp-distribution-footer {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  font-style: italic;
+  border-top: 1px solid rgba(148,163,184,0.18);
+  padding-top: 0.55rem;
+}
+.warning-inline {
+  border-top: 1px solid rgba(148,163,184,0.18);
+  padding-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.warning-inline-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #f59e0b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+@media (max-width: 640px) {
+  .bp-distribution-body { grid-template-columns: 1fr; }
+}
+
 .dashboard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; align-items: start; }
 .measurement-column { display: flex; flex-direction: column; gap: 1rem; }
 
@@ -511,6 +589,14 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert
 .reference-card { margin-top: 1rem; border-radius: 14px; padding: 1.25rem; }
 .reference-list { display: flex; flex-direction: column; gap: 6px; margin-top: 0.875rem; font-size: 0.8rem; }
 .reference-row { display: flex; align-items: center; gap: 8px; }
+.reference-note {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(148,163,184,0.18);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
 
 .table-card { border-radius: 16px; overflow: hidden; }
 .table-card-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
