@@ -218,6 +218,21 @@ function fmtDatetime(iso) {
   return { date, time, full: `${date} ${time}` };
 }
 
+// Gibt eine naive lokale ISO-Zeit ("YYYY-MM-DDTHH:MM:SS") zurück.
+// Das Backend speichert PDF-Messungen ohne Zeitzone; per ``toISOString()``
+// erzeugte UTC-Strings (Suffix Z) würden beim späteren Sortieren gegen
+// naive PDF-Zeitstempel einen TypeError auslösen und die Sleep-Banden im
+// Unified View stillschweigend ausblenden.
+function localIsoFromInput(value) {
+  if (!value) return '';
+  if (value.length === 16) return `${value}:00`;
+  if (value.length === 19) return value;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 function bpCategory(sys, dia) {
   if (sys < 120 && dia < 80) return { label: 'Optimal', cls: 'optimal' };
   if (sys < 130 && dia < 85) return { label: 'Normal', cls: 'normal' };
@@ -547,6 +562,39 @@ function renderReportSummary(viewModel) {
 
 // --- Blutdruckkategorien (ESH/ESC 2023) ------------------------------
 
+// Zeichnet den prozentualen Anteil eines aktiv gehoverten Segments mittig
+// in den Donut. Ohne Hover bleibt die Mitte leer — so ersetzt der Plugin
+// den früheren statischen „Keine Daten"-Text beim Datenzustand.
+const BP_DONUT_CENTER_PLUGIN = {
+  id: 'bpDonutCenter',
+  afterDraw(chart) {
+    const idx = chart.$bpActiveIndex;
+    const total = chart.$bpTotal || 0;
+    if (idx == null || total <= 0) return;
+    const dataset = chart.data.datasets?.[0];
+    if (!dataset) return;
+    const value = Number(dataset.data?.[idx] ?? 0);
+    if (!Number.isFinite(value) || value <= 0) return;
+    const share = (value / total) * 100;
+    const label = chart.data.labels?.[idx] ?? '';
+
+    const { ctx, chartArea } = chart;
+    const cx = (chartArea.left + chartArea.right) / 2;
+    const cy = (chartArea.top + chartArea.bottom) / 2;
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '700 1.35rem Inter, system-ui, sans-serif';
+    ctx.fillText(`${share.toFixed(1)} %`, cx, cy - 8);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 0.72rem Inter, system-ui, sans-serif';
+    ctx.fillText(String(label), cx, cy + 12);
+    ctx.restore();
+  },
+};
+
 const BP_CATEGORY_META = [
   { key: 'optimal', label: 'Optimal', color: '#10b981', range: 'SYS < 120 und DIA < 80',  sourceKeys: ['hypotension', 'optimal'] },
   { key: 'normal',  label: 'Normal',  color: '#84cc16', range: 'SYS 120–129 und DIA 80–84', sourceKeys: ['normal'] },
@@ -584,6 +632,7 @@ function renderBpDistribution(summary) {
   }
 
   emptyNode.hidden = true;
+  emptyNode.style.display = 'none';
   canvas.style.display = '';
 
   const labels = data.map((item) => item.label);
@@ -591,6 +640,7 @@ function renderBpDistribution(summary) {
   const colors = data.map((item) => item.color);
 
   if (_charts.bpDistribution) {
+    _charts.bpDistribution.$bpTotal = total;
     _charts.bpDistribution.data.labels = labels;
     _charts.bpDistribution.data.datasets[0].data = values;
     _charts.bpDistribution.data.datasets[0].backgroundColor = colors;
@@ -605,27 +655,48 @@ function renderBpDistribution(summary) {
           backgroundColor: colors,
           borderColor: 'rgba(15,23,42,0.9)',
           borderWidth: 2,
-          hoverOffset: 6,
+          hoverOffset: 10,
+          hoverBorderColor: '#f8fafc',
+          hoverBorderWidth: 2,
         }],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        cutout: '58%',
+        cutout: '62%',
+        layout: { padding: 4 },
         plugins: {
           legend: { display: false },
           tooltip: {
+            backgroundColor: 'rgba(15,23,42,0.95)',
+            titleColor: '#f8fafc',
+            bodyColor: '#e2e8f0',
+            borderColor: 'rgba(148,163,184,0.4)',
+            borderWidth: 1,
+            padding: 10,
+            displayColors: true,
             callbacks: {
               label: (ctx) => {
+                const chartTotal = ctx.chart.$bpTotal || 0;
                 const value = Number(ctx.parsed ?? 0);
-                const share = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+                const share = chartTotal > 0 ? ((value / chartTotal) * 100).toFixed(1) : '0.0';
                 return `${ctx.label}: ${value} (${share} %)`;
               },
             },
           },
         },
+        onHover: (event, activeElements, chart) => {
+          const target = event?.native?.target;
+          if (target && target.style) {
+            target.style.cursor = activeElements.length ? 'pointer' : 'default';
+          }
+          chart.$bpActiveIndex = activeElements.length ? activeElements[0].index : null;
+          chart.draw();
+        },
       },
+      plugins: [BP_DONUT_CENTER_PLUGIN],
     });
+    _charts.bpDistribution.$bpTotal = total;
   }
 
   legendNode.innerHTML = data.map((item) => {
@@ -2282,7 +2353,7 @@ async function submitEditDialog(event) {
   event.preventDefault();
   const entryId = document.getElementById('editEntryId').value;
   const body = {
-    datetime: new Date(document.getElementById('editDatetime').value).toISOString(),
+    datetime: localIsoFromInput(document.getElementById('editDatetime').value),
     systolic: parseInt(document.getElementById('editSys').value, 10),
     diastolic: parseInt(document.getElementById('editDia').value, 10),
     heart_rate: parseInt(document.getElementById('editPulse').value, 10),
@@ -2356,7 +2427,7 @@ async function handleConfiguratorSubmit(e) {
   if (dia < 40 || dia > 160) return showToast('DIA-Wert scheint unrealistisch (40-160).', 'error');
   if (pulse < 30 || pulse > 250) return showToast('Puls-Wert scheint unrealistisch (30-250).', 'error');
 
-  const isoDatetime = new Date(dtVal).toISOString();
+  const isoDatetime = localIsoFromInput(dtVal);
 
   if (target === 'server') {
     try {

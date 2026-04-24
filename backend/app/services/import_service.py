@@ -179,7 +179,13 @@ class ImportService:
                 enriched["classification_method"] = result.method
                 measurements.append(enriched)
                 try:
-                    timestamps.append(_dt.fromisoformat(measurement["datetime"]))
+                    parsed_ts = _dt.fromisoformat(measurement["datetime"])
+                    # Doppelte Absicherung gegen vermischte Datentypen:
+                    # Sleep-Phase-Detektor vergleicht Zeitstempel paarweise
+                    # und scheitert an Mix aus naive und tz-aware.
+                    if parsed_ts.tzinfo is not None:
+                        parsed_ts = parsed_ts.astimezone().replace(tzinfo=None)
+                    timestamps.append(parsed_ts)
                     is_night_arr.append(bool(result.is_night))
                 except (KeyError, ValueError):
                     continue
@@ -516,10 +522,23 @@ class _CrossReportAggregator:
 
 
 def _validate_iso_datetime(value: str) -> str:
+    """Normalisiert eingehende Datetimes auf naive lokale Zeit.
+
+    PDF-geparste Messungen sind naiv (lokale Uhrzeit ohne tzinfo), während
+    das Frontend nach einem Edit ``new Date(...).toISOString()`` mit ``Z``
+    sendet (tz-aware UTC). Würde der Server beides vermischt speichern,
+    werfen ``feature_engineering.build_features`` und
+    ``sleep_phase.detect_sleep_episodes`` beim späteren Sortieren bzw.
+    Subtrahieren ``TypeError`` — die Sleep-Banden im Unified View
+    verschwinden dann stillschweigend.
+    """
     try:
-        return datetime.fromisoformat(value).isoformat()
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid ISO datetime: {value}") from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed.isoformat()
 
 
 def _values_equal(original: dict, current: dict) -> bool:

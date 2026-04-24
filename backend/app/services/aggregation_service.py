@@ -189,7 +189,15 @@ class AggregationService:
     ) -> list[dict]:
         normalized: list[dict] = []
         for idx, item in enumerate(measurements_data, start=1):
-            dt_value = datetime.fromisoformat(str(item["datetime"])).isoformat()
+            # Datetimes werden konsequent als naive lokale Uhrzeit
+            # abgelegt, damit PDF-Messungen (naive) und manuell bearbeitete
+            # Einträge (tz-aware UTC vom Browser) im gleichen Datentyp
+            # vorliegen. Andernfalls scheitern build_features und
+            # detect_sleep_episodes an gemischten Vergleichen.
+            parsed_dt = datetime.fromisoformat(str(item["datetime"]))
+            if parsed_dt.tzinfo is not None:
+                parsed_dt = parsed_dt.astimezone().replace(tzinfo=None)
+            dt_value = parsed_dt.isoformat()
             measurement_type = self._normalize_type(item.get("measurement_type"))
             entry = {
                 "entry_id": item.get("entry_id") or self._generate_id("entry"),

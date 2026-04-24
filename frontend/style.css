@@ -254,6 +254,9 @@ main { padding: 2rem; max-width: 1600px; margin: 0 auto; }
   text-align: center;
   padding: 0 1rem;
 }
+/* [hidden] wird sonst durch display: flex überschrieben und die
+   Beschriftung bleibt mittig über dem Donut stehen. */
+.bp-distribution-empty[hidden] { display: none !important; }
 .bp-distribution-legend {
   list-style: none;
   padding: 0;

@@ -105,3 +105,30 @@ def test_bp_category_breakdown_is_included_in_summary() -> None:
     assert categories.hypertension_grade_1 == 1
     assert categories.hypertension_grade_2 == 1
     assert categories.hypotension == 1
+
+
+def test_aggregation_normalizes_tz_aware_datetime_to_naive_local() -> None:
+    """Regressionstest für den Sleep-Phase-Bug.
+
+    Wird eine Messung mit tz-aware UTC-Zeitstempel (wie sie ``Date.toISOString``
+    im Browser liefert) und eine naive PDF-Messung gemischt gespeichert,
+    scheitert der Sleep-Phase-Detektor an ``TypeError``. Die Aggregation muss
+    daher konsequent auf naive lokale Zeit normalisieren.
+    """
+    service = AggregationService()
+    payload = DirectImportRequest.model_validate(
+        {
+            "patient": {"full_name": "Testperson"},
+            "report": {"report_month": 3, "report_year": 2026, "source": "mobile_api"},
+            "measurements": [
+                {"datetime": "2026-03-01T09:00:00", "systolic": 120, "diastolic": 80, "heart_rate": 70, "measurement_type": "armband"},
+                # tz-aware UTC, wie sie das Frontend nach ``new Date(...).toISOString()`` sendet.
+                {"datetime": "2026-03-01T22:00:00+00:00", "systolic": 115, "diastolic": 75, "heart_rate": 65, "measurement_type": "armband"},
+            ],
+        }
+    )
+    response = service.build_from_direct_import(payload)
+    for measurement in response.measurements:
+        # Naive lokale ISO enthält weder "+" noch "Z" als Offset-Marker.
+        assert "+" not in measurement.datetime[10:], measurement.datetime
+        assert not measurement.datetime.endswith("Z"), measurement.datetime
