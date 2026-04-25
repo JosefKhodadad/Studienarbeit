@@ -157,3 +157,189 @@ def predict_scores(model: keras.Model, features: np.ndarray) -> np.ndarray:
         return np.zeros(0, dtype=np.float64)
     raw = model.predict(features, verbose=0)
     return np.asarray(raw, dtype=np.float64).reshape(-1)
+
+
+# --- Architektur-Visualisierung ------------------------------------------
+#
+# Wir bauen das Diagramm bewusst selbst mit matplotlib statt mit
+# ``keras.utils.plot_model``, weil letzteres ``pydot`` und das System-Tool
+# ``graphviz`` voraussetzt, das auf einem Windows-OneDrive-Pfad nicht
+# zuverlässig installiert werden kann. matplotlib ist bereits Standard-Tool
+# im Wissenschaftskontext und wird in ``requirements.txt`` gepflegt.
+
+_LAYER_COLORS = {
+    "InputLayer": "#cce5ff",
+    "Dense": "#ffd9b3",
+    "Dropout": "#dddddd",
+    "BatchNormalization": "#d9f2d9",
+    "Activation": "#fff2cc",
+}
+
+
+def _layer_summaries(model: keras.Model) -> list[dict]:
+    """Sammle pro Layer die Felder, die das Diagramm anzeigt.
+
+    ``output.shape`` wird best-effort gelesen — bei sequentiellen Modellen
+    ohne fertigen Build kann das fehlschlagen; in dem Fall fallen wir auf
+    einen Platzhalter zurück, anstatt zu crashen.
+    """
+
+    summaries: list[dict] = []
+    for layer in model.layers:
+        try:
+            shape = tuple(layer.output.shape)
+        except (AttributeError, ValueError):
+            shape = None
+        try:
+            params = int(layer.count_params())
+        except Exception:
+            params = 0
+        activation = getattr(layer, "activation", None)
+        activation_name = getattr(activation, "__name__", None) if activation else None
+        summaries.append(
+            {
+                "name": layer.name,
+                "class_name": layer.__class__.__name__,
+                "shape": shape,
+                "params": params,
+                "activation": activation_name,
+            }
+        )
+    return summaries
+
+
+def plot_architecture(
+    model: keras.Model,
+    output_path: str | Path,
+    *,
+    title: str | None = None,
+    dpi: int = 150,
+) -> Path:
+    """Speichere ein Box-Diagramm der NN-Architektur als PNG.
+
+    Pro Layer werden Klassenname, Layer-Name, Output-Shape, Aktivierung und
+    Parameter-Anzahl gerendert. Das Diagramm liest von oben nach unten in
+    Datenflussrichtung (Input oben, Output unten) — das entspricht der in
+    Keras üblichen ``model.summary()``-Reihenfolge.
+
+    ``matplotlib`` ist eine optionale Abhängigkeit (siehe
+    ``backend/requirements.txt``); fehlt sie, wird ein verständlicher
+    ImportError mit Installations-Hinweis geworfen.
+    """
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")  # headless-tauglich (kein GUI nötig)
+        import matplotlib.patches as patches
+        import matplotlib.pyplot as plt
+    except ImportError as exc:  # noqa: BLE001
+        raise ImportError(
+            "matplotlib ist für plot_architecture() erforderlich. "
+            "Bitte installieren mit:  pip install matplotlib"
+        ) from exc
+
+    summaries = _layer_summaries(model)
+    if not summaries:
+        raise ValueError("Modell enthält keine Layer — nichts zu plotten.")
+
+    n = len(summaries)
+    box_height = 0.9
+    box_width = 7.0
+    box_x = 1.5
+    fig_width = 10.0
+    fig_height = max(4.5, 1.4 * n + 1.2)
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    ax.set_xlim(0, fig_width)
+    ax.set_ylim(0, n * 1.4 + 1.0)
+    ax.axis("off")
+
+    total_params = sum(item["params"] for item in summaries)
+
+    # Layer von oben (Input) nach unten (Output) zeichnen.
+    for i, info in enumerate(summaries):
+        y = (n - 1 - i) * 1.4 + 0.3
+        color = _LAYER_COLORS.get(info["class_name"], "#f0e6ff")
+
+        rect = patches.FancyBboxPatch(
+            (box_x, y),
+            box_width,
+            box_height,
+            boxstyle="round,pad=0.05",
+            edgecolor="#333333",
+            facecolor=color,
+            linewidth=1.0,
+        )
+        ax.add_patch(rect)
+
+        shape_text = "shape=" + (str(info["shape"]) if info["shape"] is not None else "?")
+        activation_text = (
+            f" | act={info['activation']}" if info["activation"] else ""
+        )
+        params_text = f"params={info['params']:,}".replace(",", ".")
+        line1 = f"{info['class_name']}  ·  {info['name']}"
+        line2 = f"{shape_text}{activation_text}  ·  {params_text}"
+
+        ax.text(
+            box_x + box_width / 2,
+            y + box_height * 0.65,
+            line1,
+            ha="center",
+            va="center",
+            fontsize=10,
+            weight="bold",
+        )
+        ax.text(
+            box_x + box_width / 2,
+            y + box_height * 0.30,
+            line2,
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="#333333",
+        )
+
+        if i < n - 1:
+            arrow_top_y = y
+            arrow_bottom_y = y - 0.4
+            ax.annotate(
+                "",
+                xy=(box_x + box_width / 2, arrow_bottom_y),
+                xytext=(box_x + box_width / 2, arrow_top_y),
+                arrowprops=dict(arrowstyle="->", color="#555555", lw=1.4),
+            )
+
+    header = title or f"NN-Architektur · {model.name}"
+    subtitle = (
+        f"Eingabe: {summaries[0]['shape']} · "
+        f"Ausgabe: {summaries[-1]['shape']} · "
+        f"Trainierbare Parameter gesamt: {total_params:,}".replace(",", ".")
+    )
+    ax.set_title(f"{header}\n{subtitle}", fontsize=12, weight="bold", pad=14)
+
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    return out_path
+
+
+def dump_architecture_summary(
+    model: keras.Model,
+    output_path: str | Path,
+) -> Path:
+    """Schreibe ``model.summary()`` als Textdatei (Tabellenform).
+
+    Ergänzt das PNG-Diagramm um die offizielle Keras-Übersicht — nützlich
+    für die Studienarbeit, weil sie Parameteranzahl und Output-Shape je
+    Layer in der von Keras kanonisch erzeugten Form dokumentiert.
+    """
+
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    model.summary(print_fn=lambda line: lines.append(str(line)))
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out_path

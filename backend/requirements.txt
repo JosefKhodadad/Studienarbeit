@@ -16,3 +16,5 @@ keras==3.14.0
 # Installation:
 #   pip install torch==2.4.1+cpu --index-url https://download.pytorch.org/whl/cpu
 torch==2.4.1
+# Für die Visualisierung der NN-Architektur (scripts/plot_nn_architecture.py).
+matplotlib==3.9.2
