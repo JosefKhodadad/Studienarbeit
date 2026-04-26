@@ -39,21 +39,21 @@ import numpy as np
 # keine Referenzen vor (z.B. beim CSV-Training ohne PDF-Kontext), bleiben sie
 # auf 0 — das Modell verliert dann Signal, behält aber seine Eingabeform.
 FEATURE_NAMES: tuple[str, ...] = (
-    "sin_hour",
-    "cos_hour",
-    "sin_weekday",
+    "sin_hour",                  # zyklische Uhrzeit
+    "cos_hour",                  # zyklische Uhrzeit
+    "sin_weekday",               
     "cos_weekday",
-    "dist_to_sleep_center",
-    "is_phone_measurement",
-    "is_armband",
-    "sbp",
-    "dbp",
-    "hr",
-    "sbp_delta_to_day_median",
-    "dbp_delta_to_day_median",
+    "dist_to_sleep_center",      # Distanz zu 02:00 auf 24h-Kreis
+    "is_phone_measurement",      # Messart-Flag: Telefon
+    "is_armband",                # Messart-Flag: Armband
+    "sbp",                       # Rohwerte
+    "dbp",                       # Rohwerte
+    "hr",                        # Rohwerte
+    "sbp_delta_to_day_median",   # Rohwert minus Tagesmedian (Dipping-Indikator)
+    "dbp_delta_to_day_median",   
     "hr_delta_to_day_median",
-    "sbp_local_trend",
-    "hr_local_trend",
+    "sbp_local_trend",           # lokaler Trend (Differenz zum gleitenden Mittel)
+    "hr_local_trend",            
     "minutes_since_last",
     "age_norm",
     "night_ref_match",      # Nähe zum Nacht-Mittel (einseitig nach oben)

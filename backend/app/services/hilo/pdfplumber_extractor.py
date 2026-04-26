@@ -6,20 +6,31 @@ image-signature matching for the measurement type and fell back to ``unknown``
 for the vast majority of rows. pdfplumber exposes word/image bounding boxes
 which lets us reproduce the reference logic:
 
-* detect the legend at the bottom of each page to calibrate icon x-bands;
+* detect the legend at the bottom of each page to calibrate icon signatures
+  (image-stream digests) and as a positional fallback their x-bands;
 * split the page into a left and a right column;
 * find measurements in each y-row (left AND right) via regex;
-* assign a measurement type by locating the icon sitting closest to the
-  measurement row in the correct column.
+* assign a measurement type by matching the icon sitting in the same row /
+  same column against the calibrated legend signatures. The x-position is
+  only used as a coarse fallback for PDFs that don't reuse the legend image
+  streams in the table.
 
 The returned payload matches the structure produced by
 ``app.services.hilo.extractor.extract_measurement_rows`` so the rest of the
 aggregation pipeline keeps working unchanged.
+
+Why digests, not x-positions? In real Hilo monthly PDFs all table icons
+(calibration, cuff, phone) sit at the *same* x-coordinate within their
+column - the x-coordinate encodes the column, not the icon type. Using only
+x-positions confuses the column-2 icons (which sit ~108pt away from the
+Telefon legend center) with the cuffless armband default and drops them on
+the floor. The image stream id is what really discriminates the three icons.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import logging
 import re
 from typing import Any, Iterable
@@ -66,7 +77,14 @@ ICON_TOLERANCE_MIN_PT = 8.0
 # arithmetically closest band but is still far from all icon centers.
 ICON_SNAP_CUTOFF_FACTOR = 2.0
 Y_MATCH_TOLERANCE_PT = 8.0
-LEGEND_AREA_Y_RATIO = 0.85
+PROBE_MARKER = "v2-digest-fix"  # diagnostic: set by the active extractor module
+# Y-window in which we look for the *legend* (Kalibrierung / Manschettenmessung
+# / Telefonmessung) at the bottom of a page. The legend row in real Hilo PDFs
+# sits at the very bottom (top ~ 489 of a 530pt page = 92.3 %). A wider window
+# (e.g. 0.85) sweeps stray table icons near the page bottom into the legend
+# and drops them from the row-icon search, which is why we tightened it.
+LEGEND_AREA_Y_RATIO = 0.91
+ICON_MAX_SIDE_PT = 20.0  # legend & table icons are ~6pt squares
 
 
 @dataclass
@@ -105,7 +123,34 @@ def parse_date_iso(datum_str: str) -> str | None:
         return None
 
 
-def _icon_x_center_for_word(word: dict[str, Any], images: list[dict[str, Any]]) -> float | None:
+def _is_icon_image(img: dict[str, Any]) -> bool:
+    """Return True for small inline images that look like a Hilo legend icon."""
+    return (
+        img["x1"] - img["x0"] <= ICON_MAX_SIDE_PT
+        and img["bottom"] - img["top"] <= ICON_MAX_SIDE_PT
+    )
+
+
+def _image_digest(img: dict[str, Any]) -> str | None:
+    """Return a stable digest of the image's pixel stream, or ``None``.
+
+    Two icons rendered from the same XObject share the same digest, which
+    is exactly how the Hilo PDF marks icon types: every Telefon icon in
+    every row reuses the same image stream, regardless of its column.
+    """
+    stream = img.get("stream")
+    if stream is None:
+        return None
+    try:
+        data = stream.get_rawdata()
+    except Exception:  # pragma: no cover - defensive (broken PDF stream)
+        return None
+    if not data:
+        return None
+    return hashlib.md5(data).hexdigest()
+
+
+def _icon_for_word(word: dict[str, Any], images: list[dict[str, Any]]) -> dict[str, Any] | None:
     wort_x = word["x0"]
     wort_y = word["top"]
     candidates = [
@@ -114,28 +159,47 @@ def _icon_x_center_for_word(word: dict[str, Any], images: list[dict[str, Any]]) 
     ]
     if not candidates:
         return None
-    nearest = max(candidates, key=lambda i: i["x1"])
-    return (nearest["x0"] + nearest["x1"]) / 2
+    return max(candidates, key=lambda i: i["x1"])
 
 
 def _calibrate_icon_positions(page: Any) -> dict[str, float]:
     """Locate legend icons at the bottom of ``page`` and return ``{type: x_center}``."""
+    return _calibrate_legend(page)[0]
+
+
+def _calibrate_legend(page: Any) -> tuple[dict[str, float], dict[str, str]]:
+    """Locate legend icons and return ``(positions, digest_to_canonical)``.
+
+    ``positions`` maps the canonical legend name (e.g. ``"Telefonmessung"``)
+    to the x-center of its legend icon - kept for the positional fallback in
+    :func:`_classify_icon`. ``digest_to_canonical`` maps the icon's image
+    stream digest to the same canonical name; this is the authoritative
+    signal we use to type table icons.
+    """
     page_height = page.height
     legend_y_start = page_height * LEGEND_AREA_Y_RATIO
 
     words = page.extract_words(x_tolerance=5, y_tolerance=3)
     legend_words = [w for w in words if w["top"] >= legend_y_start]
-    legend_images = [img for img in page.images if img["top"] >= legend_y_start]
+    legend_images = [
+        img for img in page.images
+        if img["top"] >= legend_y_start and _is_icon_image(img)
+    ]
 
-    found: dict[str, float] = {}
+    positions: dict[str, float] = {}
+    digest_map: dict[str, str] = {}
     for word in legend_words:
         word_text = word["text"].lower()
         for keyword, canonical in LEGEND_KEYWORDS.items():
-            if keyword in word_text and canonical not in found:
-                x_center = _icon_x_center_for_word(word, legend_images)
-                if x_center is not None:
-                    found[canonical] = x_center
-    return found
+            if keyword in word_text and canonical not in positions:
+                icon = _icon_for_word(word, legend_images)
+                if icon is None:
+                    continue
+                positions[canonical] = (icon["x0"] + icon["x1"]) / 2
+                digest = _image_digest(icon)
+                if digest:
+                    digest_map[digest] = canonical
+    return positions, digest_map
 
 
 def _derive_tolerance(icon_positions: dict[str, float]) -> float:
@@ -264,10 +328,11 @@ def _detect_row_type(
     page_middle: float,
     table_images: list[dict[str, Any]],
     x_ranges: dict[str, tuple[float, float]],
+    digest_map: dict[str, str],
     *,
     tolerance: float = ICON_TOLERANCE_PT,
 ) -> str:
-    if not table_images or not x_ranges:
+    if not table_images:
         return DEFAULT_TYPE
 
     row_right_half = row_x >= page_middle
@@ -284,12 +349,29 @@ def _detect_row_type(
         return DEFAULT_TYPE
 
     nearest = max(candidates, key=lambda i: i["x0"])
+
+    # Primary signal: image stream digest matches one of the calibrated legend
+    # icons. This works regardless of which table column the icon sits in.
+    digest = _image_digest(nearest)
+    if digest and digest in digest_map:
+        detected = LEGEND_TYPE_MAP.get(digest_map[digest], DEFAULT_TYPE)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "row icon decision (digest): row_y=%.2f row_x=%.2f digest=%s -> %s",
+                row_y, row_x, digest[:10], detected,
+            )
+        return detected
+
+    # Positional fallback for PDFs whose table icons don't share streams with
+    # the legend (older / regenerated reports).
+    if not x_ranges:
+        return DEFAULT_TYPE
     x_center = (nearest["x0"] + nearest["x1"]) / 2
     detected = _classify_icon(x_center, x_ranges, tolerance=tolerance)
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
-            "row icon decision: row_y=%.2f row_x=%.2f x_center=%.2f -> %s "
-            "(tolerance=%.2f, candidates=%d)",
+            "row icon decision (x-pos fallback): row_y=%.2f row_x=%.2f "
+            "x_center=%.2f -> %s (tolerance=%.2f, candidates=%d)",
             row_y, row_x, x_center, detected, tolerance, len(candidates),
         )
     return detected
@@ -315,9 +397,16 @@ def extract_measurements(pdf_source: str | bytes) -> list[ExtractedMeasurement]:
         pdf_context = pdfplumber.open(str(pdf_source))
 
     results: list[ExtractedMeasurement] = []
-    seen: set[tuple[str, str]] = set()
+    # Dedupe by the *full* measurement tuple (date, time, sbp, dbp, hr): two
+    # readings can legitimately share the same minute (e.g. an armband reading
+    # next to a phone reading at the same `HH:MM`), so deduplicating on
+    # (date, time) alone silently drops one of them. The full tuple still
+    # protects against a row being matched twice if the regex would ever pick
+    # it up across page boundaries.
+    seen: set[tuple[str, str, str, str, str]] = set()
     cached_ranges: dict[str, tuple[float, float]] = {}
     cached_tolerance = ICON_TOLERANCE_PT
+    cached_digest_map: dict[str, str] = {}
 
     with pdf_context as pdf:
         total_pages = len(pdf.pages)
@@ -327,14 +416,15 @@ def extract_measurements(pdf_source: str | bytes) -> list[ExtractedMeasurement]:
 
         # Pages 2..N-1 in 1-based numbering map to indices 1..N-2 in 0-based.
         for page_index, page in enumerate(pdf.pages[1:-1], start=2):
-            calibrated = _calibrate_icon_positions(page)
+            calibrated, digest_map = _calibrate_legend(page)
             if calibrated:
                 cached_ranges, cached_tolerance = _build_x_ranges(calibrated)
                 logger.debug(
-                    "page %d legend calibrated: %s (tolerance=%.2f)",
+                    "page %d legend calibrated: %s (tolerance=%.2f, digests=%d)",
                     page_index,
                     {k: round(v, 2) for k, v in calibrated.items()},
                     cached_tolerance,
+                    len(digest_map),
                 )
             elif not cached_ranges:
                 logger.warning(
@@ -342,8 +432,11 @@ def extract_measurements(pdf_source: str | bytes) -> list[ExtractedMeasurement]:
                     "ranges available - rows on this page will default to "
                     "armband", page_index,
                 )
+            if digest_map:
+                cached_digest_map = digest_map
             x_ranges = cached_ranges
             tolerance = cached_tolerance
+            digest_lookup = cached_digest_map
 
             page_middle = page.width / 2
             table_y_end = page.height * LEGEND_AREA_Y_RATIO
@@ -356,7 +449,13 @@ def extract_measurements(pdf_source: str | bytes) -> list[ExtractedMeasurement]:
             for y_key in sorted(rows.keys()):
                 row_words = rows[y_key]
                 for row_payload, row_x, row_y in _matches_in_row(row_words):
-                    dedupe_key = (row_payload["datum"], row_payload["uhrzeit"])
+                    dedupe_key = (
+                        row_payload["datum"],
+                        row_payload["uhrzeit"],
+                        row_payload["sbp"],
+                        row_payload["dbp"],
+                        row_payload["hr"],
+                    )
                     if dedupe_key in seen:
                         continue
                     seen.add(dedupe_key)
@@ -377,6 +476,7 @@ def extract_measurements(pdf_source: str | bytes) -> list[ExtractedMeasurement]:
                         page_middle=page_middle,
                         table_images=table_images,
                         x_ranges=x_ranges,
+                        digest_map=digest_lookup,
                         tolerance=tolerance,
                     )
                     source_column = "right" if row_x >= page_middle else "left"
