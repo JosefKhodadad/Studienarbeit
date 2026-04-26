@@ -48,6 +48,22 @@ pip install -r requirements.txt
 
 ## Start
 
+### Schnellstart unter Windows (PowerShell-Skripte)
+
+Fuer ein robustes Setup (inkl. Neuaufbau der venv und Abhaengigkeiten) liegt
+unter ``scripts/`` ein Setup-Skript:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_windows.ps1
+```
+
+Danach startet folgendes Skript automatisch Backend + Frontend und oeffnet das
+Dashboard im Browser:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_dashboard_windows.ps1
+```
+
 ### 1. Backend starten (Port 8000)
 
 Aus dem ``backend``-Verzeichnis (mit aktivierter venv):
